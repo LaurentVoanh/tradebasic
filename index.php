@@ -787,22 +787,30 @@ function renderTable(coins, prevPrices = {}) {
 
     const tbody = document.getElementById('coinsTableBody');
     tbody.innerHTML = filtered.map(coin => {
-        const p24 = coin.price_change_pct_24h || 0;
-        const p7  = coin.price_change_7d || 0;
+        const p24 = parseFloat(coin.price_change_pct_24h) || 0;
+        const p7  = parseFloat(coin.price_change_7d) || 0;
         const flashClass = prevPrices[coin.id] && coin.current_price > prevPrices[coin.id] ? 'flash-up'
                          : prevPrices[coin.id] && coin.current_price < prevPrices[coin.id] ? 'flash-down' : '';
 
-        const spark = JSON.parse(coin.sparkline_7d || '[]');
+        // Safe JSON parse for sparkline with validation
+        let spark = [];
+        try {
+            const parsed = JSON.parse(coin.sparkline_7d || '[]');
+            if (Array.isArray(parsed)) {
+                spark = parsed.filter(v => typeof v === 'number' && isFinite(v));
+            }
+        } catch (e) { spark = []; }
+        
         const sparkId = 'spark_' + coin.id.replace(/[^a-z0-9]/gi,'_');
 
-        return `<tr onclick="openCoin('${coin.id}')" class="${flashClass}">
+        return `<tr onclick="openCoin('${escHtml(coin.id)}')" class="${flashClass}">
             <td><span class="rank-badge">${coin.market_cap_rank || '—'}</span></td>
             <td>
                 <div class="coin-info">
-                    <img src="${coin.image_url||''}" class="coin-img" onerror="this.style.display='none'">
+                    <img src="${escHtml(coin.image_url||'')}" class="coin-img" onerror="this.style.display='none'">
                     <div class="coin-name-wrap">
-                        <div class="coin-name">${coin.name}</div>
-                        <div class="coin-sym">${coin.symbol}</div>
+                        <div class="coin-name">${escHtml(coin.name)}</div>
+                        <div class="coin-sym">${escHtml(coin.symbol)}</div>
                     </div>
                 </div>
             </td>
@@ -814,8 +822,8 @@ function renderTable(coins, prevPrices = {}) {
             <td><canvas id="${sparkId}" width="90" height="32" class="sparkline-canvas"></canvas></td>
             <td>
                 <div style="display:flex;gap:6px">
-                    <button class="btn btn-green btn-sm" onclick="event.stopPropagation();quickTrade('${coin.id}','buy')">▲</button>
-                    <button class="btn btn-red btn-sm" onclick="event.stopPropagation();quickTrade('${coin.id}','sell')">▼</button>
+                    <button class="btn btn-green btn-sm" onclick="event.stopPropagation();quickTrade('${escHtml(coin.id)}','buy')">▲</button>
+                    <button class="btn btn-red btn-sm" onclick="event.stopPropagation();quickTrade('${escHtml(coin.id)}','sell')">▼</button>
                 </div>
             </td>
         </tr>`;
@@ -823,7 +831,14 @@ function renderTable(coins, prevPrices = {}) {
 
     // Draw sparklines
     filtered.forEach(coin => {
-        const spark = JSON.parse(coin.sparkline_7d || '[]');
+        let spark = [];
+        try {
+            const parsed = JSON.parse(coin.sparkline_7d || '[]');
+            if (Array.isArray(parsed)) {
+                spark = parsed.filter(v => typeof v === 'number' && isFinite(v));
+            }
+        } catch (e) { spark = []; }
+        
         if (spark.length < 2) return;
         const sparkId = 'spark_' + coin.id.replace(/[^a-z0-9]/gi,'_');
         const canvas = document.getElementById(sparkId);
@@ -1270,6 +1285,10 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
 // ══════════════════════════════════════════════
 // UTILS
 // ══════════════════════════════════════════════
+function escHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
 function formatPrice(v) {
     if (!v && v !== 0) return '—';
     if (v >= 1000) return v.toLocaleString('fr-FR', {maximumFractionDigits:2}) + ' €';
