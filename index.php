@@ -473,7 +473,7 @@ header {
         <div class="logo-icon"><i class="fa-solid fa-brain"></i></div>
         <div>
             IA CRYPTO INVEST
-            <span>Plateforme IA de Simulation Trading</span>
+            <span>Système de Trading IA - 1,000,000 BRICS Coins</span>
         </div>
     </div>
     <div class="header-center">
@@ -482,15 +482,22 @@ header {
             <span id="liveLabel">LIVE</span>
         </div>
         <div id="headerCapital" class="header-capital">
-            <i class="fa-solid fa-coins"></i> 1 000 000 € Virtuels
+            <i class="fa-solid fa-coins"></i> <span id="totalBricsDisplay">1,000,000</span> BRICS
         </div>
         <div id="updateCountdown" style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:var(--text3);">
-            Mise à jour dans <span id="countdownSecs">60</span>s
+            Prochain trade dans <span id="countdownSecs">8</span>s
+        </div>
+        <div class="trade-stats" style="display:flex;gap:15px;margin-left:20px;font-size:0.7rem;color:var(--text2);">
+            <span><i class="fa-solid fa-robot"></i> <span id="activeAgentsCount">0</span> Agents</span>
+            <span><i class="fa-solid fa-chart-line"></i> <span id="tradesToday">0</span> Trades</span>
         </div>
     </div>
     <div class="header-right">
         <button class="btn btn-ghost btn-sm" id="btnBrain" title="Lancer le Cerveau Central">
             <i class="fa-solid fa-robot"></i> Cerveau IA
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="openModal('modelsModal')" title="Acheter des modèles IA">
+            <i class="fa-solid fa-store"></i> Modèles
         </button>
         <div id="authSection">
             <button class="btn btn-ghost btn-sm" onclick="openModal('authModal')">
@@ -700,6 +707,48 @@ header {
     </div>
 </div>
 
+<!-- MODELS MODAL -->
+<div class="modal-overlay" id="modelsModal">
+    <div class="modal" style="max-width:900px">
+        <button class="modal-close" onclick="closeModal('modelsModal')"><i class="fa-solid fa-xmark"></i></button>
+        <h2><i class="fa-solid fa-store" style="color:var(--gold)"></i> Boutique de Modèles IA</h2>
+        <p style="color:var(--text3);margin-bottom:20px">Achetez des modèles IA performants parmi les 100 agents de l'IA Centrale. Chaque modèle coûte 5000 BRICS Coins.</p>
+        
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+            <div>
+                <h3 style="font-size:0.85rem;color:var(--cyan);margin-bottom:12px;text-transform:uppercase">Modèles Disponibles</h3>
+                <div id="masterModelsList" style="max-height:500px;overflow-y:auto">
+                    <div style="text-align:center;padding:40px;color:var(--text3)">Chargement...</div>
+                </div>
+            </div>
+            <div>
+                <h3 style="font-size:0.85rem;color:var(--gold);margin-bottom:12px;text-transform:uppercase">Mes Modèles Achetés</h3>
+                <div id="userModelsList" style="max-height:500px;overflow-y:auto">
+                    <div style="text-align:center;padding:40px;color:var(--text3)">Chargement...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- CONSOLE OUTPUT PANEL -->
+<div class="console-panel" style="position:fixed;bottom:0;left:0;right:0;height:200px;background:#0a0f1a;border-top:2px solid var(--cyan);z-index:999;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 15px;background:rgba(0,255,255,0.05);border-bottom:1px solid rgba(0,255,255,0.1)">
+        <div style="display:flex;align-items:center;gap:10px">
+            <i class="fa-solid fa-terminal" style="color:var(--cyan)"></i>
+            <span style="font-weight:700;color:var(--cyan);font-size:0.75rem;text-transform:uppercase">Console IA Centrale - Logs en Temps Réel</span>
+        </div>
+        <div style="display:flex;gap:15px;font-size:0.7rem;color:var(--text3)">
+            <span><i class="fa-solid fa-circle" style="color:var(--green);font-size:0.5rem"></i> Auto-Trade: 8s</span>
+            <span><i class="fa-solid fa-robot"></i> <span id="consoleAgentsCount">0</span> Agents Actifs</span>
+            <span><i class="fa-solid fa-arrow-trend-up"></i> <span id="consoleTradesCount">0</span> Trades</span>
+        </div>
+    </div>
+    <div id="consoleOutput" style="flex:1;overflow-y:auto;padding:10px 15px;font-family:'JetBrains Mono',monospace;font-size:0.7rem">
+        <!-- Logs will be inserted here -->
+    </div>
+</div>
+
 <!-- TOAST -->
 <div id="toast"></div>
 
@@ -710,11 +759,16 @@ header {
 const state = {
     coins: [],
     agents: [],
+    masterModels: [],
+    userModels: [],
+    consoleLogs: [],
     sortField: 'rank',
     sortAsc: true,
     user: null,
-    updateTimer: 60,
-    sparklines: {}
+    updateTimer: 8,
+    sparklines: {},
+    totalBrics: 1000000,
+    tradesToday: 0
 };
 
 // ══════════════════════════════════════════════
@@ -1245,15 +1299,24 @@ async function loadStatus() {
 }
 
 function startCountdown() {
-    let secs = 60;
+    let secs = 8;
     setInterval(() => {
         secs--;
-        if (secs < 0) secs = 60;
+        if (secs < 0) secs = 8;
         document.getElementById('countdownSecs').textContent = secs;
     }, 1000);
 }
 
 function startAutoRefresh() {
+    // Auto-trade every 8 seconds
+    setInterval(async () => {
+        const result = await api('auto_trade');
+        if (result.success) {
+            state.tradesToday += result.trades_executed || 0;
+            document.getElementById('tradesToday').textContent = state.tradesToday;
+        }
+    }, 8000);
+
     // Refresh market every 60s
     setInterval(async () => {
         await api('update_market');
@@ -1263,6 +1326,136 @@ function startAutoRefresh() {
 
     // Refresh agents every 30s
     setInterval(loadAgents, 30000);
+
+    // Refresh console logs every 5s
+    setInterval(loadConsoleLogs, 5000);
+
+    // Load master models on init
+    loadMasterModels();
+}
+
+async function loadConsoleLogs() {
+    const data = await api('get_console_logs', { limit: 50 });
+    if (data.success && data.logs) {
+        state.consoleLogs = data.logs;
+        renderConsoleLogs();
+    }
+}
+
+function renderConsoleLogs() {
+    const container = document.getElementById('consoleOutput');
+    if (!container) return;
+    
+    container.innerHTML = state.consoleLogs.map(log => {
+        const time = new Date(log.created_at * 1000).toLocaleTimeString('fr-FR');
+        const icon = log.log_type.includes('TRADE') ? 'fa-arrow-trend-up' : 
+                     log.log_type.includes('AGENT') ? 'fa-robot' : 
+                     log.log_type.includes('MODEL') ? 'fa-store' : 'fa-terminal';
+        const color = log.log_type.includes('ERROR') ? 'var(--red)' :
+                      log.log_type.includes('TRADE') ? 'var(--cyan)' : 'var(--text2)';
+        
+        return `<div class="console-line" style="display:flex;gap:10px;font-family:'JetBrains Mono',monospace;font-size:0.7rem;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+            <span style="color:var(--text3);min-width:70px">${time}</span>
+            <i class="fa-solid ${icon}" style="color:${color}"></i>
+            <span style="color:${color};font-weight:600;min-width:120px">${log.log_type}</span>
+            <span style="color:var(--text2);flex:1">${escHtml(log.message)}</span>
+        </div>`;
+    }).join('');
+}
+
+async function loadMasterModels() {
+    const data = await api('get_master_models');
+    if (data.success && data.models) {
+        state.masterModels = data.models;
+        renderMasterModels();
+    }
+}
+
+function renderMasterModels() {
+    const container = document.getElementById('masterModelsList');
+    if (!container) return;
+    
+    container.innerHTML = state.masterModels.map(model => {
+        const pnlClass = model.total_pnl_percent >= 0 ? 'pct-pos' : 'pct-neg';
+        const pnlSign = model.total_pnl_percent >= 0 ? '+' : '';
+        
+        return `<div class="agent-card" style="padding:15px;margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:10px">
+                <div>
+                    <div style="font-weight:700;color:var(--gold);margin-bottom:4px">${escHtml(model.name)}</div>
+                    <div style="font-size:0.7rem;color:var(--text3)">
+                        <span style="background:rgba(0,255,255,0.1);padding:2px 8px;border-radius:3px;text-transform:uppercase">${model.timeframe || 'short'}</span>
+                        <span style="margin-left:8px">${model.strategy_type}</span>
+                    </div>
+                </div>
+                <div style="text-align:right">
+                    <div style="font-size:0.7rem;color:var(--text3)">P&L</div>
+                    <div class="${pnlClass}" style="font-weight:700">${pnlSign}${model.total_pnl_percent?.toFixed(2)}%</div>
+                </div>
+            </div>
+            <div style="font-size:0.7rem;color:var(--text2);margin-bottom:12px;line-height:1.4;background:rgba(0,0,0,0.2);padding:10px;border-radius:6px;max-height:80px;overflow:hidden">
+                ${escHtml(model.strategy_prompt?.substring(0, 200))}...
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <div style="font-size:0.7rem;color:var(--text3)">
+                    <span>${model.total_trades || 0} trades</span> · 
+                    <span>Win: ${(model.win_rate || 0).toFixed(1)}%</span>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="purchaseModel(${model.id})" ${!state.user ? 'disabled' : ''}>
+                    <i class="fa-solid fa-cart-shopping"></i> Acheter - 5000 BRICS
+                </button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+async function purchaseModel(agentId) {
+    if (!state.user) {
+        showToast('Connexion requise pour acheter un modèle', 'error');
+        openModal('authModal');
+        return;
+    }
+    
+    const result = await api('purchase_model', { agent_id: agentId });
+    if (result.success) {
+        showToast('Modèle acheté avec succès !', 'success');
+        loadUserModels();
+    } else {
+        showToast(result.error || 'Erreur lors de l\'achat', 'error');
+    }
+}
+
+async function loadUserModels() {
+    const data = await api('get_user_models');
+    if (data.success && data.models) {
+        state.userModels = data.models;
+        renderUserModels();
+    }
+}
+
+function renderUserModels() {
+    const container = document.getElementById('userModelsList');
+    if (!container) return;
+    
+    if (state.userModels.length === 0) {
+        container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Aucun modèle acheté. Visitez la boutique pour acquérir des modèles IA performants.</div>';
+        return;
+    }
+    
+    container.innerHTML = state.userModels.map(model => `
+        <div class="agent-card" style="padding:12px;margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <div>
+                    <div style="font-weight:700;color:var(--cyan)">${escHtml(model.name)}</div>
+                    <div style="font-size:0.7rem;color:var(--text3)">Acheté le ${new Date(model.purchased_at * 1000).toLocaleDateString('fr-FR')}</div>
+                </div>
+                <div style="text-align:right">
+                    <div style="font-size:0.7rem;color:var(--text3)">Prix payé</div>
+                    <div style="color:var(--gold);font-weight:700">${model.price_paid} BRICS</div>
+                </div>
+            </div>
+        </div>
+    `).join('');
 }
 
 function quickTrade(coinId, action) {

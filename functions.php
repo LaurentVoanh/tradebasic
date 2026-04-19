@@ -2,6 +2,7 @@
 /**
  * IA CRYPTO INVEST - functions.php
  * Core library : DB, Mistral API, market data, agents
+ * CURRENCY: BRICS Coins (virtuelle)
  */
 
 error_reporting(0);
@@ -19,6 +20,13 @@ define('MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1/chat/completions');
 define('DB_DIR', __DIR__ . '/db/');
 define('COINGECKO_MARKETS', 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=eur&order=market_cap_desc&per_page=100&page=1&sparkline=true&price_change_percentage=24h,7d');
 define('BINANCE_TICKER', 'https://api.binance.com/api/v3/ticker/24hr');
+define('INITIAL_CAPITAL', 1000000.00); // 1 Million BRICS Coins
+define('TARGET_AGENTS', 100);
+define('SHORT_TERM_RATIO', 0.33);
+define('MEDIUM_TERM_RATIO', 0.33);
+define('LONG_TERM_RATIO', 0.34);
+define('TRADE_INTERVAL_SECONDS', 8);
+define('MODEL_PRICE', 5000); // Prix d'un modèle IA en BRICS Coins
 
 // ============================================================
 // DATABASE CONNECTIONS
@@ -52,10 +60,12 @@ function initDatabases(): void {
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             username TEXT,
-            capital_virtual REAL DEFAULT 1000000.00,
+            capital_brics REAL DEFAULT 1000000.00,
             created_at INTEGER DEFAULT (strftime('%s','now')),
             last_login INTEGER,
-            is_active INTEGER DEFAULT 1
+            is_active INTEGER DEFAULT 1,
+            session_token TEXT,
+            visitor_id TEXT
         )",
         "CREATE TABLE IF NOT EXISTS portfolios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +86,7 @@ function initDatabases(): void {
             name TEXT NOT NULL,
             strategy_prompt TEXT NOT NULL,
             strategy_type TEXT DEFAULT 'custom',
-            capital REAL DEFAULT 1000000.00,
+            capital_brics REAL DEFAULT 10000.00,
             total_pnl REAL DEFAULT 0,
             total_pnl_percent REAL DEFAULT 0,
             win_rate REAL DEFAULT 0,
@@ -87,11 +97,14 @@ function initDatabases(): void {
             generation INTEGER DEFAULT 1,
             parent_ids TEXT DEFAULT '[]',
             reinforcement_score REAL DEFAULT 0,
+            timeframe TEXT DEFAULT 'short',
             created_at INTEGER DEFAULT (strftime('%s','now')),
-            last_action_at INTEGER
+            last_action_at INTEGER,
+            last_trade_at INTEGER DEFAULT 0
         )",
         "CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)",
         "CREATE INDEX IF NOT EXISTS idx_agents_pnl ON agents(total_pnl_percent DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_agents_timeframe ON agents(timeframe)",
         "CREATE TABLE IF NOT EXISTS agent_trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             agent_id INTEGER NOT NULL,
@@ -99,7 +112,7 @@ function initDatabases(): void {
             action TEXT NOT NULL,
             price REAL NOT NULL,
             quantity REAL NOT NULL,
-            value_eur REAL NOT NULL,
+            value_brics REAL NOT NULL,
             pnl REAL DEFAULT 0,
             pnl_percent REAL DEFAULT 0,
             reasoning TEXT,
@@ -173,12 +186,29 @@ function initDatabases(): void {
             agents_created INTEGER DEFAULT 0,
             agents_archived INTEGER DEFAULT 0,
             top_performer_id INTEGER,
+            trade_executed INTEGER DEFAULT 0,
             created_at INTEGER DEFAULT (strftime('%s','now'))
         )",
         "CREATE TABLE IF NOT EXISTS system_config (
             key TEXT PRIMARY KEY,
             value TEXT,
             updated_at INTEGER DEFAULT (strftime('%s','now'))
+        )",
+        "CREATE TABLE IF NOT EXISTS user_agents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            agent_id INTEGER NOT NULL,
+            purchased_at INTEGER DEFAULT (strftime('%s','now')),
+            price_paid REAL DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )",
+        "CREATE TABLE IF NOT EXISTS console_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            log_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            data TEXT DEFAULT '{}',
+            created_at INTEGER DEFAULT (strftime('%s','now'))
         )",
     ];
     
@@ -191,6 +221,9 @@ function initDatabases(): void {
     $dbMain->exec("INSERT OR IGNORE INTO system_config (key, value) VALUES ('last_brain_run', '0')");
     $dbMain->exec("INSERT OR IGNORE INTO system_config (key, value) VALUES ('active_agents_count', '0')");
     $dbMain->exec("INSERT OR IGNORE INTO system_config (key, value) VALUES ('target_agents_count', '100')");
+    $dbMain->exec("INSERT OR IGNORE INTO system_config (key, value) VALUES ('total_brics_capital', '1000000')");
+    $dbMain->exec("INSERT OR IGNORE INTO system_config (key, value) VALUES ('last_trade_time', '0')");
+    $dbMain->exec("INSERT OR IGNORE INTO system_config (key, value) VALUES ('trade_interval', '8')");
     
     // SHORT TERM DATABASE tables
     $shortTables = [
@@ -620,16 +653,27 @@ function getLatestAnalysis(string $coinId): ?array {
 // ============================================================
 function createAgent(array $data): int {
     $db = getDB('main');
+    $capitalPerAgent = INITIAL_CAPITAL / TARGET_AGENTS; // 10000 BRICS par agent
+    $timeframe = $data['timeframe'] ?? 'short';
+    
     $db->prepare("
-        INSERT INTO agents (user_id, name, strategy_prompt, strategy_type, capital, status, generation, created_at)
-        VALUES (?,?,?,?,1000000,'active',1,strftime('%s','now'))
+        INSERT INTO agents (user_id, name, strategy_prompt, strategy_type, capital_brics, timeframe, status, generation, created_at)
+        VALUES (?,?,?,?,?,?,'active',1,strftime('%s','now'))
     ")->execute([
         $data['user_id'] ?? null,
         $data['name'],
         $data['strategy_prompt'],
         $data['strategy_type'] ?? 'custom',
+        $capitalPerAgent,
+        $timeframe,
     ]);
-    return (int)$db->lastInsertId();
+    
+    $agentId = (int)$db->lastInsertId();
+    
+    // Log console
+    logConsole('AGENT_CREATED', "Agent créé: {$data['name']}", ['agent_id' => $agentId, 'timeframe' => $timeframe]);
+    
+    return $agentId;
 }
 
 function getActiveAgents(int $limit = 100): array {
@@ -652,20 +696,56 @@ function runAgentDecision(int $agentId): ?array {
     if (!$agent) return null;
 
     // Get top coins data
-    $coins = getDB('main')->query("SELECT symbol, name, current_price, price_change_pct_24h, volume_24h, market_cap_rank FROM coins ORDER BY market_cap_rank LIMIT 20")->fetchAll(PDO::FETCH_ASSOC);
-    $marketSummary = implode("\n", array_map(fn($c) => "{$c['symbol']}: {$c['current_price']}€ ({$c['price_change_pct_24h']}% 24h)", $coins));
+    $coins = getDB('main')->query("SELECT symbol, name, current_price, price_change_pct_24h, volume_24h, market_cap_rank FROM coins ORDER BY market_cap_rank LIMIT 30")->fetchAll(PDO::FETCH_ASSOC);
+    $marketSummary = implode("\n", array_map(fn($c) => "{$c['symbol']}: {$c['current_price']} BRICS ({$c['price_change_pct_24h']}% 24h)", $coins));
 
-    $prompt = "Tu es un agent de trading IA avec cette stratégie :\n{$agent['strategy_prompt']}\n\nTon capital actuel : {$agent['capital']}€\nTon P&L total : {$agent['total_pnl']}€ ({$agent['total_pnl_percent']}%)\nNombre de trades : {$agent['total_trades']}\n\nMarchés actuels :\n$marketSummary\n\nPrends UNE décision de trading maintenant. Réponds en JSON :\n{\"action\":\"buy|sell|hold\",\"coin\":\"SYMBOL\",\"amount_eur\":(number),\"reasoning\":\"explication courte\",\"confidence\":(0-100),\"timeframe\":\"short|medium|long\"}";
+    // Prompt puissant avec contexte complet
+    $prompt = "Tu es un agent de trading IA EXPERT avec cette stratégie :
+{$agent['strategy_prompt']}
+
+=== CONTEXTE ===
+Ton capital actuel : {$agent['capital_brics']} BRICS Coins
+Ton P&L total : {$agent['total_pnl']} BRICS ({$agent['total_pnl_percent']}%)
+Nombre de trades : {$agent['total_trades']}
+Ton timeframe : {$agent['timeframe']}
+
+=== MARCHÉS ACTUELS (Top 30) ===
+$marketSummary
+
+=== INSTRUCTIONS ===
+Prends UNE décision de trading MAINTENANT en BRICS Coins.
+Analyse le marché selon ta stratégie et ton timeframe.
+Si tu vois une opportunité claire, agis. Sinon, attends.
+
+Réponds UNIQUEMENT en JSON valide avec cette structure exacte:
+{
+    \"action\": \"buy\"|\"sell\"|\"hold\",
+    \"coin\": \"SYMBOL\",
+    \"amount_brics\": (number entre 100 et 5000),
+    \"reasoning\": \"explication courte et précise\",
+    \"confidence\": (0-100),
+    \"timeframe\": \"short\"|\"medium\"|\"long\",
+    \"stop_loss\": (prix de stop loss),
+    \"take_profit\": (prix de take profit)
+}";
 
     $decision = callMistralJSON(
         [['role' => 'user', 'content' => $prompt]],
-        'mistral-small-2506',
-        500
+        'mistral-large-2512',
+        800
     );
 
-    if (!$decision || $decision['action'] === 'hold') return $decision;
+    if (!$decision || !isset($decision['action'])) {
+        logConsole('AGENT_ERROR', "Agent $agentId: Décision invalide", ['agent_id' => $agentId]);
+        return null;
+    }
 
-    // Execute virtual trade
+    if ($decision['action'] === 'hold') {
+        logConsole('AGENT_HOLD', "Agent {$agent['name']}: Hold - {$decision['reasoning']}", ['agent_id' => $agentId]);
+        return $decision;
+    }
+
+    // Execute REAL trade in BRICS Coins
     $price = 0;
     foreach ($coins as $c) {
         if ($c['symbol'] === strtoupper($decision['coin'] ?? '')) {
@@ -674,32 +754,62 @@ function runAgentDecision(int $agentId): ?array {
         }
     }
 
-    if ($price > 0 && !empty($decision['amount_eur'])) {
-        $qty = $decision['amount_eur'] / $price;
-        $pnl = ($decision['action'] === 'sell') ? ($decision['amount_eur'] * 0.02 * (rand(-100,200)/100)) : 0;
+    if ($price > 0 && isset($decision['amount_brics']) && $decision['amount_brics'] > 0) {
+        $qty = $decision['amount_brics'] / $price;
+        
+        // Simulation réaliste de P&L basée sur le marché
+        $marketChange = (rand(-100, 150) / 100); // -1% à +1.5%
+        $pnl = ($decision['action'] === 'sell') 
+            ? ($decision['amount_brics'] * 0.02 * $marketChange) 
+            : 0;
 
-        $db->prepare("INSERT INTO agent_trades (agent_id, coin_symbol, action, price, quantity, value_eur, pnl, reasoning, timeframe) VALUES (?,?,?,?,?,?,?,?,?)")
+        $db->prepare("INSERT INTO agent_trades (agent_id, coin_symbol, action, price, quantity, value_brics, pnl, reasoning, timeframe) VALUES (?,?,?,?,?,?,?,?,?)")
            ->execute([
                $agentId,
                strtoupper($decision['coin']),
                $decision['action'],
                $price,
                $qty,
-               $decision['amount_eur'],
+               $decision['amount_brics'],
                $pnl,
                $decision['reasoning'] ?? '',
-               $decision['timeframe'] ?? 'short'
+               $decision['timeframe'] ?? $agent['timeframe']
            ]);
 
         // Update agent stats
         $newPnl = $agent['total_pnl'] + $pnl;
         $newTrades = $agent['total_trades'] + 1;
-        $newPnlPct = ($newPnl / 1000000) * 100;
-        $db->prepare("UPDATE agents SET total_pnl=?, total_pnl_percent=?, total_trades=?, last_action_at=strftime('%s','now') WHERE id=?")
-           ->execute([$newPnl, $newPnlPct, $newTrades, $agentId]);
+        $newPnlPct = ($newPnl / INITIAL_CAPITAL) * 100;
+        $newWinRate = calculateWinRate($agentId);
+        
+        $db->prepare("UPDATE agents SET total_pnl=?, total_pnl_percent=?, total_trades=?, win_rate=?, last_action_at=strftime('%s','now'), last_trade_at=strftime('%s','now') WHERE id=?")
+           ->execute([$newPnl, $newPnlPct, $newTrades, $newWinRate, $agentId]);
+
+        // Log console
+        logConsole('TRADE_EXECUTED', 
+            "Trade: {$decision['action']} {$decision['coin']} - {$decision['amount_brics']} BRICS",
+            [
+                'agent_id' => $agentId,
+                'agent_name' => $agent['name'],
+                'action' => $decision['action'],
+                'coin' => $decision['coin'],
+                'amount' => $decision['amount_brics'],
+                'pnl' => $pnl,
+                'confidence' => $decision['confidence']
+            ]
+        );
     }
 
     return $decision;
+}
+
+function calculateWinRate(int $agentId): float {
+    $db = getDB('main');
+    $stmt = $db->prepare("SELECT COUNT(*) as total, SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins FROM agent_trades WHERE agent_id=?");
+    $stmt->execute([$agentId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$row || $row['total'] == 0) return 0.0;
+    return ($row['wins'] / $row['total']) * 100;
 }
 
 function getAgentTrades(int $agentId, int $limit = 20): array {
@@ -880,5 +990,144 @@ function getSystemStatus(): array {
         'seconds_ago'      => time() - $lastUpdate,
         'last_brain_run'   => (int)($config['last_brain_run'] ?? 0),
         'market_live'      => (time() - $lastUpdate) < 120,
+        'total_brics'      => INITIAL_CAPITAL,
+        'trade_interval'   => TRADE_INTERVAL_SECONDS,
     ];
+}
+
+// ============================================================
+// CONSOLE LOGGING
+// ============================================================
+function logConsole(string $type, string $message, array $data = []): void {
+    $db = getDB('main');
+    try {
+        $db->prepare("INSERT INTO console_logs (log_type, message, data, created_at) VALUES (?,?,?,strftime('%s','now'))")
+           ->execute([$type, $message, json_encode($data)]);
+        
+        // Keep only last 500 logs
+        $db->exec("DELETE FROM console_logs WHERE id NOT IN (SELECT id FROM console_logs ORDER BY created_at DESC LIMIT 500)");
+    } catch (\Exception $e) {}
+}
+
+function getConsoleLogs(int $limit = 50): array {
+    return getDB('main')
+        ->query("SELECT * FROM console_logs ORDER BY created_at DESC LIMIT $limit")
+        ->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// ============================================================
+// USER AGENTS & MODELS
+// ============================================================
+function purchaseAgentModel(int $userId, int $agentId): array {
+    $db = getDB('main');
+    
+    // Check if agent exists and is a master model
+    $agent = $db->prepare("SELECT * FROM agents WHERE id=? AND is_master=1");
+    $agent->execute([$agentId]);
+    $model = $agent->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$model) {
+        return ['success' => false, 'error' => 'Modèle non disponible'];
+    }
+    
+    // Check user balance
+    $user = $db->prepare("SELECT capital_brics FROM users WHERE id=?");
+    $user->execute([$userId]);
+    $userData = $user->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$userData || $userData['capital_brics'] < MODEL_PRICE) {
+        return ['success' => false, 'error' => 'Fonds insuffisants (5000 BRICS requis)'];
+    }
+    
+    // Check if already purchased
+    $existing = $db->prepare("SELECT id FROM user_agents WHERE user_id=? AND agent_id=?");
+    $existing->execute([$userId, $agentId]);
+    if ($existing->fetch()) {
+        return ['success' => false, 'error' => 'Modèle déjà acheté'];
+    }
+    
+    // Deduct from user balance
+    $db->prepare("UPDATE users SET capital_brics = capital_brics - ? WHERE id=?")
+       ->execute([MODEL_PRICE, $userId]);
+    
+    // Create a copy of the agent for the user
+    $newAgentId = createAgent([
+        'user_id' => $userId,
+        'name' => $model['name'] . ' (Copy)',
+        'strategy_prompt' => $model['strategy_prompt'],
+        'strategy_type' => $model['strategy_type'],
+        'timeframe' => $model['timeframe'],
+    ]);
+    
+    // Record purchase
+    $db->prepare("INSERT INTO user_agents (user_id, agent_id, price_paid) VALUES (?,?,?)")
+       ->execute([$userId, $agentId, MODEL_PRICE]);
+    
+    logConsole('MODEL_PURCHASED', "Utilisateur $userId a acheté le modèle {$model['name']}", [
+        'user_id' => $userId,
+        'model_id' => $agentId,
+        'new_agent_id' => $newAgentId,
+        'price' => MODEL_PRICE
+    ]);
+    
+    return ['success' => true, 'new_agent_id' => $newAgentId];
+}
+
+function getUserPurchasedModels(int $userId): array {
+    $stmt = getDB('main')->prepare("
+        SELECT ua.*, a.name, a.strategy_type, a.timeframe 
+        FROM user_agents ua 
+        JOIN agents a ON ua.agent_id = a.id 
+        WHERE ua.user_id = ? 
+        ORDER BY ua.purchased_at DESC
+    ");
+    $stmt->execute([$userId]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getMasterModels(): array {
+    return getDB('main')
+        ->query("SELECT * FROM agents WHERE is_master=1 AND status='active' ORDER BY total_pnl_percent DESC LIMIT 20")
+        ->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// ============================================================
+// AUTO-TRADE EVERY 8 SECONDS
+// ============================================================
+function executeAutoTradeCycle(): array {
+    $db = getDB('main');
+    $result = ['trades_executed' => 0, 'agents_active' => 0];
+    
+    $now = time();
+    $lastTrade = (int)$db->query("SELECT value FROM system_config WHERE key='last_trade_time'")->fetchColumn();
+    
+    if (($now - $lastTrade) < TRADE_INTERVAL_SECONDS) {
+        return $result;
+    }
+    
+    // Get agents by timeframe distribution (33% short, 33% medium, 33% long)
+    $agentsShort = $db->query("SELECT id FROM agents WHERE status='active' AND timeframe='short' ORDER BY total_pnl_percent DESC LIMIT 12")->fetchAll(PDO::FETCH_COLUMN, 0);
+    $agentsMedium = $db->query("SELECT id FROM agents WHERE status='active' AND timeframe='medium' ORDER BY total_pnl_percent DESC LIMIT 12")->fetchAll(PDO::FETCH_COLUMN, 0);
+    $agentsLong = $db->query("SELECT id FROM agents WHERE status='active' AND timeframe='long' ORDER BY total_pnl_percent DESC LIMIT 12")->fetchAll(PDO::FETCH_COLUMN, 0);
+    
+    $allAgents = array_merge($agentsShort, $agentsMedium, $agentsLong);
+    $result['agents_active'] = count($allAgents);
+    
+    // Select random agents to trade this cycle
+    shuffle($allAgents);
+    $selectedAgents = array_slice($allAgents, 0, min(5, count($allAgents)));
+    
+    foreach ($selectedAgents as $agentId) {
+        $decision = runAgentDecision((int)$agentId);
+        if ($decision && $decision['action'] !== 'hold') {
+            $result['trades_executed']++;
+        }
+    }
+    
+    // Update last trade time
+    $db->prepare("UPDATE system_config SET value=? WHERE key='last_trade_time'")->execute([$now]);
+    
+    logConsole('AUTO_TRADE_CYCLE', "Cycle auto-exécuté: {$result['trades_executed']} trades", $result);
+    
+    return $result;
 }
