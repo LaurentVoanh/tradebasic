@@ -39,6 +39,17 @@ try {
             echo json_encode(['success' => true, 'status' => getSystemStatus()]);
             break;
 
+        case 'auto_trade':
+            $result = executeAutoTradeCycle();
+            echo json_encode(['success' => true, ...$result]);
+            break;
+
+        case 'get_console_logs':
+            $limit = (int)($input['limit'] ?? 50);
+            $logs = getConsoleLogs($limit);
+            echo json_encode(['success' => true, 'logs' => $logs]);
+            break;
+
         // ---- NEWS & ANALYSIS ----
         case 'fetch_news':
             $coinId   = $input['coin_id'] ?? '';
@@ -69,19 +80,47 @@ try {
             echo json_encode(['success' => true, 'agents' => $agents]);
             break;
 
+        case 'get_master_models':
+            $models = getMasterModels();
+            echo json_encode(['success' => true, 'models' => $models]);
+            break;
+
         case 'create_agent':
             if (empty($input['name']) || empty($input['strategy_prompt'])) {
                 echo json_encode(['success' => false, 'error' => 'Nom et stratégie requis']);
                 break;
             }
             $userId = $_SESSION['user']['id'] ?? null;
+            $timeframe = $input['timeframe'] ?? 'short';
             $id = createAgent([
                 'user_id'         => $userId,
                 'name'            => htmlspecialchars($input['name']),
                 'strategy_prompt' => $input['strategy_prompt'],
                 'strategy_type'   => $input['strategy_type'] ?? 'custom',
+                'timeframe'       => $timeframe,
             ]);
             echo json_encode(['success' => true, 'agent_id' => $id]);
+            break;
+
+        case 'purchase_model':
+            $userId = $_SESSION['user']['id'] ?? null;
+            if (!$userId) {
+                echo json_encode(['success' => false, 'error' => 'Connexion requise']);
+                break;
+            }
+            $agentId = (int)($input['agent_id'] ?? 0);
+            $result = purchaseAgentModel($userId, $agentId);
+            echo json_encode($result);
+            break;
+
+        case 'get_user_models':
+            $userId = $_SESSION['user']['id'] ?? null;
+            if (!$userId) {
+                echo json_encode(['success' => false, 'error' => 'Connexion requise']);
+                break;
+            }
+            $models = getUserPurchasedModels($userId);
+            echo json_encode(['success' => true, 'models' => $models]);
             break;
 
         case 'run_agent':
