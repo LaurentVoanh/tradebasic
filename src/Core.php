@@ -376,6 +376,13 @@ class ApiRotation {
 
 class Database {
     private $connections = [];
+    private $market;
+    private $apiRotation;
+    
+    public function setMarket($market) { $this->market = $market; }
+    public function setApiRotation($api) { $this->apiRotation = $api; }
+    public function getMarket() { return $this->market; }
+    public function getApiRotation() { return $this->apiRotation; }
     
     public function getConnection($dbName = 'main') {
         if (!isset($this->connections[$dbName])) {
