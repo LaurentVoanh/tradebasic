@@ -38,8 +38,10 @@ try {
             $tradesExecuted = 0;
             
             foreach ($traders as $agent) {
-                runAgentDecision($agent, $coins);
-                $tradesExecuted++;
+                $decision = runAgentDecision($agent['id']);
+                if ($decision && $decision['action'] !== 'hold') {
+                    $tradesExecuted++;
+                }
                 usleep(100000); // 100ms entre chaque
             }
             
