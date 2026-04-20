@@ -1,19 +1,32 @@
-```gitignore
+```
 # Compiled and build artifacts
 *.pyc
 __pycache__/
+*.o
+*.obj
+dist/
+build/
+*.class
+*.exe
+*.dll
+*.so
+*.a
+*.out
 
 # Dependencies
-venv/
 .venv/
+venv/
 node_modules/
-vendor/
-composer.lock
+.mypy_cache/
+.pytest_cache/
+target/
+.gradle/
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
+*.swo
 
 # Environment
 .env
@@ -24,7 +37,7 @@ composer.lock
 .vscode/
 .idea/
 
-# OS
+# System files
 .DS_Store
 Thumbs.db
 
@@ -33,29 +46,7 @@ coverage/
 htmlcov/
 .coverage
 
-# Distribution / packaging
-dist/
-build/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Testing
-.pytest_cache/
-.mypy_cache/
-.tox/
-
-# Git
-.git/
-!.gitignore
-
-# Backup files
-*~
-*.bak
-*.orig
-*.rej
-
-# Compression
+# Compressed files
 *.zip
 *.gz
 *.tar
@@ -78,12 +69,4 @@ build/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-
-# Images (if accidentally added)
-*.png
-*.jpg
-*.jpeg
-*.bmp
-*.gif
-*.webm
 ```
