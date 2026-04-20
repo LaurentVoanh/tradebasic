@@ -1,12 +1,12 @@
 <?php
 /**
- * IA CRYPTO INVEST - API Endpoint
+ * NEXUS TRADER - API Endpoint
  * Fournit les données en temps réel via AJAX polling
  */
 
 require_once __DIR__ . '/src/Core.php';
 
-use IACrypto\Core\Engine;
+use Nexus\Core\Engine;
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
@@ -25,7 +25,7 @@ try {
             
         case 'coins':
             $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 50;
-            $coins = $engine->getMarket()->getCoins($limit);
+            $coins = $engine->getMarketData()->getTopCoins($limit);
             echo json_encode(['success' => true, 'data' => $coins]);
             break;
             
@@ -35,28 +35,28 @@ try {
             break;
             
         case 'trades':
-            $db = $engine->getDatabase()->getConnection('main');
+            $db = $engine->getDatabase()->getPDO();
             $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 50;
-            $stmt = $db->prepare("SELECT * FROM agent_trades ORDER BY executed_at DESC LIMIT ?");
+            $stmt = $db->prepare("SELECT * FROM trades ORDER BY created_at DESC LIMIT ?");
             $stmt->execute([$limit]);
-            $trades = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $trades = $stmt->fetchAll();
             echo json_encode(['success' => true, 'data' => $trades]);
             break;
             
         case 'logs':
-            $db = $engine->getDatabase()->getConnection('main');
+            $db = $engine->getDatabase()->getPDO();
             $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 100;
-            $stmt = $db->prepare("SELECT * FROM console_logs ORDER BY created_at DESC LIMIT ?");
+            $stmt = $db->prepare("SELECT * FROM console_logs ORDER BY timestamp DESC LIMIT ?");
             $stmt->execute([$limit]);
-            $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $logs = $stmt->fetchAll();
             echo json_encode(['success' => true, 'data' => $logs]);
             break;
             
         case 'positions':
-            $db = $engine->getDatabase()->getConnection('main');
-            $stmt = $db->query("SELECT op.*, a.name as agent_name FROM open_positions op 
-                JOIN agents a ON op.agent_id = a.id ORDER BY unrealized_pnl DESC");
-            $positions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $db = $engine->getDatabase()->getPDO();
+            $stmt = $db->query("SELECT p.*, a.name as agent_name FROM positions p 
+                JOIN agents a ON p.agent_id = a.id WHERE p.status = 'open' ORDER BY pnl DESC");
+            $positions = $stmt->fetchAll();
             echo json_encode(['success' => true, 'data' => $positions]);
             break;
             
@@ -66,17 +66,12 @@ try {
             break;
             
         case 'update_market':
-            $count = $engine->getMarket()->update();
+            $count = $engine->getMarketData()->updateMarketData();
             echo json_encode(['success' => true, 'data' => ['coins_updated' => $count]]);
             break;
             
-        case 'api_stats':
-            $stats = $engine->getApiRotation()->getKeyStats();
-            echo json_encode(['success' => true, 'data' => $stats]);
-            break;
-            
         default:
-            echo json_encode(['success' => false, 'error' => 'Action inconnue']);
+            echo json_encode(['success' => false, 'error' => 'Action inconnue. Actions disponibles: stats, coins, agents, trades, logs, positions, run_cycle, update_market']);
     }
     
 } catch (Throwable $e) {
