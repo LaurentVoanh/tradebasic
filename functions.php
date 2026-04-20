@@ -31,6 +31,7 @@ define('MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1/chat/completions');
 define('DB_DIR', __DIR__ . '/db/');
 define('COINGECKO_MARKETS', 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=eur&order=market_cap_desc&per_page=50&page=1&sparkline=true&price_change_percentage=24h,7d,30d');
 define('COINGECKO_HISTORY', 'https://api.coingecko.com/api/v3/coins/{id}/ohlc?vs_currency=eur&days={days}');
+define('BINANCE_TICKER', 'https://api.binance.com/api/v3/ticker/24hr');
 define('INITIAL_CAPITAL', 1000000.00); // 1 Million BRICS Coins = 1M EUR
 define('TARGET_AGENTS', 50); // Nombre optimal d'agents
 define('AGENT_CAPITAL', 20000.00); // Capital par agent (2% du total)
@@ -508,8 +509,11 @@ function updateMarketData(): array {
     $coins = fetchCoinGeckoMarkets();
     $binance = fetchBinanceTickers();
     $updated = 0;
-
-    if (empty($coins)) return ['success' => false, 'error' => 'CoinGecko unavailable'];
+    
+    if (empty($coins)) {
+        error_log("updateMarketData: CoinGecko retourne des données vides");
+        return ['success' => false, 'error' => 'CoinGecko unavailable'];
+    }
 
     $stmt = $db->prepare("
         INSERT OR REPLACE INTO coins
@@ -520,6 +524,11 @@ function updateMarketData(): array {
     ");
 
     foreach ($coins as $coin) {
+        // Vérifier que le prix est valide
+        if (!isset($coin['current_price']) || $coin['current_price'] <= 0) {
+            continue;
+        }
+        
         $sparkline = json_encode($coin['sparkline_in_7d']['price'] ?? []);
         $stmt->execute([
             $coin['id'],
@@ -554,9 +563,24 @@ function updateMarketData(): array {
 }
 
 function getCoins(int $limit = 100): array {
-    return getDB('main')
-        ->query("SELECT * FROM coins ORDER BY market_cap_rank ASC LIMIT $limit")
-        ->fetchAll(PDO::FETCH_ASSOC);
+    try {
+        $coins = getDB('main')
+            ->query("SELECT * FROM coins WHERE current_price > 0 ORDER BY market_cap_rank ASC LIMIT $limit")
+            ->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Si aucune crypto n'est trouvée, essayer de mettre à jour les données
+        if (empty($coins)) {
+            updateMarketData();
+            $coins = getDB('main')
+                ->query("SELECT * FROM coins WHERE current_price > 0 ORDER BY market_cap_rank ASC LIMIT $limit")
+                ->fetchAll(PDO::FETCH_ASSOC);
+        }
+        
+        return $coins;
+    } catch (Throwable $e) {
+        error_log("Erreur getCoins: " . $e->getMessage());
+        return [];
+    }
 }
 
 function getCoin(string $coinId): ?array {
