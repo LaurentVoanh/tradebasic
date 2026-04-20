@@ -3,109 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Crypto Invest - Trading Autonome en Temps Réel</title>
+    <title>NEXUS TRADER - IA Trading Autonome</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-primary: #0a0e27;
+            --bg-secondary: #1a1f4e;
+            --bg-card: rgba(255,255,255,0.05);
+            --accent-cyan: #00d4ff;
+            --accent-purple: #7b2cbf;
+            --accent-pink: #f72585;
+            --success: #00ff88;
+            --danger: #ff4757;
+            --text-muted: #8892b0;
+        }
+        
         body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            background: linear-gradient(135deg, #0a0e27 0%, #1a1f4e 50%, #0d1b2a 100%);
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 50%, #0d1b2a 100%);
             color: #fff;
             min-height: 100vh;
-            overflow-x: hidden;
         }
-        .container { max-width: 1600px; margin: 0 auto; padding: 20px; }
         
-        /* Header */
-        header {
-            text-align: center;
-            padding: 30px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            margin-bottom: 30px;
-        }
-        h1 {
-            font-size: 2.5em;
-            background: linear-gradient(90deg, #00d4ff, #7b2cbf, #f72585);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            animation: glow 2s ease-in-out infinite alternate;
-        }
-        @keyframes glow { from { text-shadow: 0 0 20px rgba(0,212,255,0.5); } to { text-shadow: 0 0 40px rgba(123,44,191,0.8); } }
-        .subtitle { color: #8892b0; margin-top: 10px; font-size: 1.1em; }
-        
-        /* Stats Cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .stat-card {
-            background: rgba(255,255,255,0.05);
+        .card {
+            background: var(--bg-card);
             backdrop-filter: blur(10px);
-            border-radius: 15px;
-            padding: 25px;
             border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 15px;
             transition: transform 0.3s, box-shadow 0.3s;
         }
-        .stat-card:hover {
+        
+        .card:hover {
             transform: translateY(-5px);
             box-shadow: 0 10px 40px rgba(0,212,255,0.2);
         }
-        .stat-value {
-            font-size: 2em;
-            font-weight: bold;
-            margin: 10px 0;
-        }
-        .stat-label { color: #8892b0; font-size: 0.9em; text-transform: uppercase; letter-spacing: 1px; }
-        .positive { color: #00ff88; }
-        .negative { color: #ff4757; }
-        .neutral { color: #00d4ff; }
         
-        /* Main Grid */
-        .main-grid {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        @media (max-width: 1200px) { .main-grid { grid-template-columns: 1fr; } }
+        .stat-value { font-size: 2em; font-weight: bold; }
+        .text-cyan { color: var(--accent-cyan) !important; }
+        .text-success-glow { color: var(--success); text-shadow: 0 0 10px var(--success); }
+        .text-danger-glow { color: var(--danger); text-shadow: 0 0 10px var(--danger); }
         
-        /* Panels */
-        .panel {
-            background: rgba(255,255,255,0.05);
-            backdrop-filter: blur(10px);
-            border-radius: 15px;
-            padding: 20px;
-            border: 1px solid rgba(255,255,255,0.1);
-            margin-bottom: 20px;
-        }
-        .panel-title {
-            font-size: 1.3em;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .panel-title::before {
-            content: '';
-            width: 4px;
-            height: 20px;
-            background: linear-gradient(180deg, #00d4ff, #7b2cbf);
-            border-radius: 2px;
-        }
+        .table { color: #fff; }
+        .table th { color: var(--text-muted); text-transform: uppercase; font-size: 0.8em; }
+        .table td, .table th { border-color: rgba(255,255,255,0.05); }
+        .table-hover tbody tr:hover { background: rgba(255,255,255,0.05); }
         
-        /* Tables */
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        th { color: #8892b0; font-weight: 600; text-transform: uppercase; font-size: 0.8em; }
-        tr:hover { background: rgba(255,255,255,0.05); }
-        .coin-icon { width: 24px; height: 24px; vertical-align: middle; margin-right: 8px; border-radius: 50%; }
+        .coin-icon { width: 24px; height: 24px; border-radius: 50%; margin-right: 8px; }
         
-        /* Live Feed */
-        .live-feed {
-            max-height: 400px;
-            overflow-y: auto;
-        }
         .feed-item {
             padding: 12px;
             border-left: 3px solid;
@@ -114,388 +58,288 @@
             animation: slideIn 0.3s ease;
         }
         @keyframes slideIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
-        .feed-buy { border-color: #00ff88; }
-        .feed-sell { border-color: #ff4757; }
-        .feed-info { border-color: #00d4ff; }
-        .feed-time { color: #8892b0; font-size: 0.8em; }
+        .feed-buy { border-color: var(--success); }
+        .feed-sell { border-color: var(--danger); }
+        .feed-info { border-color: var(--accent-cyan); }
         
-        /* Agents List */
-        .agent-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px;
-            background: rgba(255,255,255,0.03);
-            border-radius: 10px;
-            margin-bottom: 10px;
-            transition: all 0.3s;
+        .status-dot {
+            width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+            margin-right: 8px;
         }
-        .agent-item:hover { background: rgba(255,255,255,0.08); }
-        .agent-name { font-weight: 600; margin-bottom: 5px; }
-        .agent-stats { font-size: 0.85em; color: #8892b0; }
-        .agent-pnl { font-weight: bold; }
+        .status-active { background: var(--success); box-shadow: 0 0 10px var(--success); }
+        .status-running { background: var(--accent-cyan); box-shadow: 0 0 10px var(--accent-cyan); animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         
-        /* Chart Placeholder */
-        .chart-container {
-            height: 300px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            position: relative;
-        }
-        canvas { width: 100% !important; height: 100% !important; }
-        
-        /* Loading Animation */
-        .loading {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 2px solid rgba(255,255,255,0.3);
-            border-top-color: #00d4ff;
-            border-radius: 50%;
+        .loading-spinner {
+            width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: var(--accent-cyan); border-radius: 50%;
             animation: spin 1s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
         
-        /* Status Indicator */
-        .status-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 8px;
+        h1 {
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple), var(--accent-pink));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: glow 2s ease-in-out infinite alternate;
         }
-        .status-active { background: #00ff88; box-shadow: 0 0 10px #00ff88; }
-        .status-running { background: #00d4ff; box-shadow: 0 0 10px #00d4ff; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        @keyframes glow { from { text-shadow: 0 0 20px rgba(0,212,255,0.5); } to { text-shadow: 0 0 40px rgba(123,44,191,0.8); } }
         
-        /* Scrollbar */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🤖 IA CRYPTO INVEST</h1>
-            <p class="subtitle">Système de Trading Autonome par Intelligence Artificielle • 1,000,000 BRICS</p>
-        </header>
-        
-        <!-- Stats Overview -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Capital Total</div>
-                <div class="stat-value neutral" id="total-capital">-- BRICS</div>
+<div class="container py-4">
+    <header class="text-center mb-5">
+        <h1 class="display-4"><i class="bi bi-robot"></i> NEXUS TRADER</h1>
+        <p class="text-muted">Système de Trading Autonome par Intelligence Artificielle</p>
+        <span class="badge bg-primary"><span class="status-dot status-running"></span>En ligne</span>
+    </header>
+    
+    <!-- Stats Cards -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4 col-lg-2">
+            <div class="card h-100 p-3">
+                <div class="text-muted text-uppercase small">Capital Total</div>
+                <div class="stat-value text-cyan" id="total-capital">--</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">PnL Total</div>
-                <div class="stat-value" id="total-pnl">-- BRICS</div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="card h-100 p-3">
+                <div class="text-muted text-uppercase small">PnL Total</div>
+                <div class="stat-value" id="total-pnl">--</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">Agents Actifs</div>
-                <div class="stat-value neutral" id="agents-count">--</div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="card h-100 p-3">
+                <div class="text-muted text-uppercase small">Agents Actifs</div>
+                <div class="stat-value text-cyan" id="agents-count">--</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">Trades Exécutés</div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="card h-100 p-3">
+                <div class="text-muted text-uppercase small">Trades</div>
                 <div class="stat-value" id="total-trades">--</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">Win Rate</div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="card h-100 p-3">
+                <div class="text-muted text-uppercase small">Win Rate</div>
                 <div class="stat-value" id="win-rate">--%</div>
             </div>
         </div>
-        
-        <div class="main-grid">
-            <!-- Left Column -->
-            <div>
-                <!-- Market Overview -->
-                <div class="panel">
-                    <div class="panel-title">📊 Marché Crypto en Temps Réel</div>
-                    <div style="overflow-x: auto;">
-                        <table id="coins-table">
-                            <thead>
-                                <tr>
-                                    <th>#</th>
-                                    <th>Coin</th>
-                                    <th>Prix</th>
-                                    <th>24h %</th>
-                                    <th>7d %</th>
-                                    <th>Market Cap</th>
-                                </tr>
-                            </thead>
-                            <tbody id="coins-body">
-                                <tr><td colspan="6"><span class="loading"></span> Chargement...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                
-                <!-- Live Trades Feed -->
-                <div class="panel">
-                    <div class="panel-title">⚡ Flux de Trades en Direct</div>
-                    <div class="live-feed" id="trades-feed">
-                        <div class="feed-item feed-info">
-                            <div class="feed-time">En attente de trades...</div>
-                        </div>
-                    </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="card h-100 p-3">
+                <div class="text-muted text-uppercase small">Positions</div>
+                <div class="stat-value" id="open-positions">--</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row g-4">
+        <!-- Left Column -->
+        <div class="col-lg-8">
+            <!-- Market Table -->
+            <div class="card p-3 mb-4">
+                <h5 class="mb-3"><i class="bi bi-graph-up"></i> Marché Crypto</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr><th>#</th><th>Coin</th><th>Prix</th><th>24h %</th><th>7d %</th><th>Market Cap</th></tr>
+                        </thead>
+                        <tbody id="coins-body">
+                            <tr><td colspan="6"><span class="loading-spinner"></span> Chargement...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
             
-            <!-- Right Column -->
-            <div>
-                <!-- Active Agents -->
-                <div class="panel">
-                    <div class="panel-title">👥 Agents IA Actifs</div>
-                    <div id="agents-list" style="max-height: 500px; overflow-y: auto;">
-                        <div style="text-align: center; padding: 20px; color: #8892b0;">
-                            <span class="loading"></span> Chargement...
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Open Positions -->
-                <div class="panel">
-                    <div class="panel-title">📈 Positions Ouvertes</div>
-                    <div id="positions-list" style="max-height: 300px; overflow-y: auto;">
-                        <div style="text-align: center; padding: 20px; color: #8892b0;">
-                            Aucune position
-                        </div>
-                    </div>
+            <!-- Console Logs -->
+            <div class="card p-3">
+                <h5 class="mb-3"><i class="bi bi-terminal"></i> Journal d'Activité</h5>
+                <div id="console-logs" style="max-height: 250px; overflow-y: auto;">
+                    <div class="feed-item feed-info"><small class="text-muted">Initialisation...</small></div>
                 </div>
             </div>
         </div>
         
-        <!-- Console Logs -->
-        <div class="panel">
-            <div class="panel-title">📜 Journal d'Activité</div>
-            <div class="live-feed" id="console-logs" style="max-height: 200px;">
-                <div class="feed-item feed-info">
-                    <div class="feed-time">Initialisation du système...</div>
+        <!-- Right Column -->
+        <div class="col-lg-4">
+            <!-- Agents -->
+            <div class="card p-3 mb-4">
+                <h5 class="mb-3"><i class="bi bi-people"></i> Agents IA</h5>
+                <div id="agents-list" style="max-height: 300px; overflow-y: auto;">
+                    <div class="text-center text-muted py-3"><span class="loading-spinner"></span></div>
+                </div>
+            </div>
+            
+            <!-- Positions -->
+            <div class="card p-3 mb-4">
+                <h5 class="mb-3"><i class="bi bi-briefcase"></i> Positions</h5>
+                <div id="positions-list" style="max-height: 200px; overflow-y: auto;">
+                    <div class="text-center text-muted py-3">Aucune position</div>
+                </div>
+            </div>
+            
+            <!-- Trades Feed -->
+            <div class="card p-3">
+                <h5 class="mb-3"><i class="bi bi-lightning"></i> Derniers Trades</h5>
+                <div id="trades-feed" style="max-height: 200px; overflow-y: auto;">
+                    <div class="feed-item feed-info"><small class="text-muted">En attente...</small></div>
                 </div>
             </div>
         </div>
     </div>
+</div>
 
-    <script>
-        const API_URL = 'api.php';
-        
-        // Format numbers
-        function formatNumber(num, decimals = 2) {
-            return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(num);
-        }
-        
-        function formatCurrency(num) {
-            return formatNumber(num) + ' BRICS';
-        }
-        
-        function formatTime(timestamp) {
-            return new Date(timestamp * 1000).toLocaleTimeString('fr-FR');
-        }
-        
-        // Fetch data
-        async function fetchData(action, params = {}) {
-            try {
-                const url = new URL(API_URL);
-                url.searchParams.set('action', action);
-                Object.keys(params).forEach(k => url.searchParams.set(k, params[k]));
-                const res = await fetch(url);
-                if (!res.ok) {
-                    throw new Error('HTTP error ' + res.status);
-                }
-                return await res.json();
-            } catch (e) {
-                console.error('Fetch error for ' + action + ':', e);
-                return null;
-            }
-        }
-        
-        // Update stats
-        async function updateStats() {
-            const data = await fetchData('stats');
-            if (data && data.success) {
-                const s = data.data;
-                document.getElementById('total-capital').textContent = formatCurrency(s.total_capital);
-                const pnlEl = document.getElementById('total-pnl');
-                pnlEl.textContent = (s.total_pnl >= 0 ? '+' : '') + formatCurrency(s.total_pnl);
-                pnlEl.className = 'stat-value ' + (s.total_pnl >= 0 ? 'positive' : 'negative');
-                document.getElementById('agents-count').textContent = s.agents_count;
-                document.getElementById('total-trades').textContent = s.total_trades;
-                const wrEl = document.getElementById('win-rate');
-                wrEl.textContent = formatNumber(s.win_rate) + '%';
-                wrEl.className = 'stat-value ' + (s.win_rate >= 50 ? 'positive' : 'negative');
-            }
-        }
-        
-        // Update coins table
-        async function updateCoins() {
-            const data = await fetchData('coins', { limit: 20 });
-            if (data && data.success) {
-                const tbody = document.getElementById('coins-body');
-                tbody.innerHTML = data.data.map((c, i) => `
-                    <tr>
-                        <td>${c.market_cap_rank || '-'}</td>
-                        <td><img src="${c.image_url}" class="coin-icon" alt="">${c.symbol} <span style="color:#8892b0">${c.name}</span></td>
-                        <td>$${formatNumber(c.current_price, c.current_price < 1 ? 6 : 2)}</td>
-                        <td class="${c.price_change_pct_24h >= 0 ? 'positive' : 'negative'}">${formatNumber(c.price_change_pct_24h)}%</td>
-                        <td class="${c.price_change_7d >= 0 ? 'positive' : 'negative'}">${formatNumber(c.price_change_7d)}%</td>
-                        <td>$${formatNumber(c.market_cap, 0)}</td>
-                    </tr>
-                `).join('');
-            }
-        }
-        
-        // Update agents list
-        async function updateAgents() {
-            const data = await fetchData('agents');
-            if (data && data.success) {
-                const container = document.getElementById('agents-list');
-                if (data.data.length === 0) {
-                    container.innerHTML = '<div style="text-align:center;padding:20px;color:#8892b0;">Aucun agent actif</div>';
-                } else {
-                    container.innerHTML = data.data.map(a => `
-                        <div class="agent-item">
-                            <div>
-                                <div class="agent-name">${a.name}</div>
-                                <div class="agent-stats">Capital: ${formatCurrency(a.capital_brics)} • Trades: ${a.total_trades}</div>
-                            </div>
-                            <div class="agent-pnl ${a.total_pnl >= 0 ? 'positive' : 'negative'}">
-                                ${a.total_pnl >= 0 ? '+' : ''}${formatNumber(a.total_pnl)}
-                            </div>
+<script>
+const API_URL = 'api.php';
+const TRIGGER_URL = 'trigger.php';
+
+function fmt(n, d=2) { return new Intl.NumberFormat('fr-FR', {minimumFractionDigits:d, maximumFractionDigits:d}).format(n||0); }
+function fmtCurr(n) { return fmt(n) + ' $'; }
+function fmtPct(n) { return fmt(n) + '%'; }
+
+async function fetchAPI(action, params={}) {
+    try {
+        const url = new URL(API_URL);
+        url.searchParams.set('action', action);
+        Object.entries(params).forEach(([k,v]) => url.searchParams.set(k,v));
+        const res = await fetch(url);
+        return await res.json();
+    } catch(e) { console.error(e); return null; }
+}
+
+async function updateStats() {
+    const data = await fetchAPI('stats');
+    if(data && data.success) {
+        const s = data.data;
+        document.getElementById('total-capital').textContent = fmtCurr(s.total_capital);
+        const pnlEl = document.getElementById('total-pnl');
+        pnlEl.textContent = (s.total_pnl>=0?'+':'') + fmtCurr(s.total_pnl);
+        pnlEl.className = 'stat-value ' + (s.total_pnl>=0?'text-success-glow':'text-danger-glow');
+        document.getElementById('agents-count').textContent = s.agents_count;
+        document.getElementById('total-trades').textContent = s.total_trades;
+        const wrEl = document.getElementById('win-rate');
+        wrEl.textContent = fmtPct(s.win_rate);
+        wrEl.className = 'stat-value ' + (s.win_rate>=50?'text-success-glow':'text-danger-glow');
+        document.getElementById('open-positions').textContent = s.open_positions;
+    }
+}
+
+async function updateCoins() {
+    const data = await fetchAPI('coins', {limit:15});
+    if(data && data.success) {
+        document.getElementById('coins-body').innerHTML = data.data.map((c,i)=>`
+            <tr>
+                <td>${c.market_cap_rank||'-'}</td>
+                <td><img src="${c.image_url||''}" class="coin-icon">${c.symbol}<small class="text-muted">${c.name}</small></td>
+                <td>$${fmt(c.price, c.price<1?6:2)}</td>
+                <td class="${(c.change_24h||0)>=0?'text-success-glow':'text-danger-glow'}">${fmtPct(c.change_24h||0)}</td>
+                <td class="${(c.change_7d||0)>=0?'text-success-glow':'text-danger-glow'}">${fmtPct(c.change_7d||0)}</td>
+                <td>$${fmt(c.market_cap,0)}</td>
+            </tr>
+        `).join('');
+    }
+}
+
+async function updateAgents() {
+    const data = await fetchAPI('agents');
+    if(data && data.success) {
+        const el = document.getElementById('agents-list');
+        if(!data.data.length) {
+            el.innerHTML = '<div class="text-center text-muted py-3">Aucun agent actif</div>';
+        } else {
+            el.innerHTML = data.data.map(a=>`
+                <div class="p-2 mb-2" style="background:rgba(255,255,255,0.03);border-radius:8px;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>${a.name}</strong><br>
+                            <small class="text-muted">${a.dna}</small>
                         </div>
-                    `).join('');
-                }
-            }
-        }
-        
-        // Update trades feed
-        async function updateTrades() {
-            const data = await fetchData('trades', { limit: 20 });
-            if (data && data.success) {
-                const container = document.getElementById('trades-feed');
-                if (data.data.length === 0) {
-                    container.innerHTML = '<div class="feed-item feed-info"><div class="feed-time">En attente de trades...</div></div>';
-                } else {
-                    container.innerHTML = data.data.map(t => `
-                        <div class="feed-item feed-${t.action}">
-                            <strong>${t.action.toUpperCase()}</strong> - ${t.coin_symbol}
-                            <div style="font-size:0.9em;margin-top:5px;">
-                                Prix: $${formatNumber(t.price)} • Quantité: ${formatNumber(t.quantity)} • Valeur: ${formatCurrency(t.value_brics)}
-                                ${t.pnl !== 0 ? ` • PnL: ${formatNumber(t.pnl)} (${formatNumber(t.pnl_percent)}%)` : ''}
+                        <div class="text-end">
+                            <div class="${(a.total_pnl||0)>=0?'text-success-glow':'text-danger-glow'}">
+                                ${(a.total_pnl||0)>=0?'+':''}${fmt(a.total_pnl||0)}
                             </div>
-                            <div class="feed-time">${formatTime(t.executed_at)}</div>
+                            <small class="text-muted">${a.total_trades} trades</small>
                         </div>
-                    `).join('');
-                }
-            }
+                    </div>
+                </div>
+            `).join('');
         }
-        
-        // Update positions
-        async function updatePositions() {
-            const data = await fetchData('positions');
-            if (data && data.success) {
-                const container = document.getElementById('positions-list');
-                if (data.data.length === 0) {
-                    container.innerHTML = '<div style="text-align:center;padding:20px;color:#8892b0;">Aucune position ouverte</div>';
-                } else {
-                    container.innerHTML = data.data.map(p => `
-                        <div class="agent-item">
-                            <div>
-                                <div class="agent-name">${p.coin_symbol} <span style="color:#8892b0;font-weight:normal;">via ${p.agent_name}</span></div>
-                                <div class="agent-stats">Qty: ${formatNumber(p.quantity)} • Avg: $${formatNumber(p.avg_buy_price)}</div>
-                            </div>
-                            <div class="agent-pnl ${p.unrealized_pnl >= 0 ? 'positive' : 'negative'}">
-                                ${p.unrealized_pnl >= 0 ? '+' : ''}${formatNumber(p.unrealized_pnl)}
-                            </div>
+    }
+}
+
+async function updateTrades() {
+    const data = await fetchAPI('trades', {limit:10});
+    if(data && data.success) {
+        const el = document.getElementById('trades-feed');
+        if(!data.data.length) {
+            el.innerHTML = '<div class="feed-item feed-info"><small class="text-muted">En attente de trades...</small></div>';
+        } else {
+            el.innerHTML = data.data.map(t=>`
+                <div class="feed-item feed-${t.type==='buy'?'buy':'sell'}">
+                    <strong>${t.type.toUpperCase()}</strong> ${t.coin_symbol}
+                    <small class="text-muted d-block">$${fmt(t.price)} × ${fmt(t.amount)}</small>
+                </div>
+            `).join('');
+        }
+    }
+}
+
+async function updatePositions() {
+    const data = await fetchAPI('positions');
+    if(data && data.success) {
+        const el = document.getElementById('positions-list');
+        if(!data.data.length) {
+            el.innerHTML = '<div class="text-center text-muted py-3">Aucune position ouverte</div>';
+        } else {
+            el.innerHTML = data.data.map(p=>`
+                <div class="p-2 mb-2" style="background:rgba(255,255,255,0.03);border-radius:8px;">
+                    <div class="d-flex justify-content-between">
+                        <div><strong>${p.coin_symbol}</strong><br><small class="text-muted">${p.agent_name}</small></div>
+                        <div class="${(p.pnl||0)>=0?'text-success-glow':'text-danger-glow'}">
+                            ${(p.pnl||0)>=0?'+':''}${fmt(p.pnl||0)} (${fmtPct(p.pnl_percent||0)})
                         </div>
-                    `).join('');
-                }
-            }
+                    </div>
+                </div>
+            `).join('');
         }
-        
-        // Update console logs
-        async function updateLogs() {
-            const data = await fetchData('logs', { limit: 30 });
-            if (data && data.success) {
-                const container = document.getElementById('console-logs');
-                container.innerHTML = data.data.map(l => {
-                    const d = JSON.parse(l.data || '{}');
-                    let type = 'info';
-                    if (l.log_type.includes('buy')) type = 'buy';
-                    if (l.log_type.includes('sell')) type = 'sell';
-                    return `
-                        <div class="feed-item feed-${type}">
-                            <strong>${l.log_type}</strong>: ${l.message}
-                            <div class="feed-time">${formatTime(l.created_at)}</div>
-                        </div>
-                    `;
-                }).join('');
-            }
-        }
-        
-        // Trigger brain cycle via AJAX (no cron needed)
-        async function triggerCycle() {
-            await fetchData('run_cycle');
-        }
-        
-        // Initial market update
-        async function updateMarket() {
-            await fetchData('update_market');
-        }
-        
-        // Main loop
-        async function mainLoop() {
-            await updateStats();
-            await updateCoins();
-            await updateAgents();
-            await updateTrades();
-            await updatePositions();
-            await updateLogs();
-        }
-        
-        // Start - Initial load with error handling and logging
-        async function init() {
-            addLog('info', '🚀 Démarrage du système IA Crypto Invest...');
-            try {
-                addLog('info', '📡 Mise à jour du marché crypto...');
-                await updateMarket();
-                addLog('info', '📊 Chargement des données principales...');
-                await mainLoop();
-                
-                // Force first brain cycle to create initial agents
-                addLog('info', '🧠 Initialisation du cerveau IA...');
-                await triggerCycle();
-                
-                addLog('success', '✅ Système prêt - Agents IA en cours de déploiement');
-            } catch (e) {
-                console.error('Initial load error:', e);
-                addLog('error', '⚠️ Erreur au chargement: ' + e.message);
-            }
-        }
-        
-        // Add log helper
-        function addLog(type, message) {
-            const container = document.getElementById('console-logs');
-            const div = document.createElement('div');
-            div.className = 'feed-item feed-' + type;
-            div.innerHTML = '<div class="feed-time">' + new Date().toLocaleTimeString() + '</div><div>' + message + '</div>';
-            container.insertBefore(div, container.firstChild);
-        }
-        
-        init();
-        
-        // Polling intervals
-        setInterval(mainLoop, 3000);      // Data refresh every 3s
-        setInterval(triggerCycle, 5000);   // Brain cycle every 5s for faster startup
-        
-        // Auto-scroll feeds
-        setInterval(() => {
-            const feeds = document.querySelectorAll('.live-feed');
-            feeds.forEach(f => f.scrollTop = f.scrollHeight);
-        }, 1000);
-    </script>
+    }
+}
+
+async function updateLogs() {
+    const data = await fetchAPI('logs', {limit:20});
+    if(data && data.success) {
+        document.getElementById('console-logs').innerHTML = data.data.map(l=>{
+            const levelClass = l.level==='error'?'feed-sell':(l.level==='warning'?'feed-info':'feed-info');
+            return `<div class="feed-item ${levelClass}">
+                <small class="text-muted">${new Date(l.timestamp*1000).toLocaleTimeString()}</small>
+                ${l.message}
+            </div>`;
+        }).join('');
+    }
+}
+
+async function triggerBrain() {
+    try { await fetch(TRIGGER_URL); } catch(e) {}
+}
+
+// Main loop
+async function refreshAll() {
+    await Promise.all([updateStats(), updateCoins(), updateAgents(), updateTrades(), updatePositions(), updateLogs()]);
+}
+
+// Initial load
+refreshAll();
+
+// Polling toutes les 3 secondes
+setInterval(refreshAll, 3000);
+
+// Trigger brain cycle toutes les 10 secondes
+setInterval(triggerBrain, 10000);
+</script>
 </body>
 </html>

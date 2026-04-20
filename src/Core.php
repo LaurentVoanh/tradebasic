@@ -1,63 +1,529 @@
 <?php
 /**
- * IA CRYPTO INVEST - Core Engine v3.0
- * Compatible PHP 7.2+ (Hostinger)
- * Architecture: Rotation API Mistral + Reinforcement Learning + AJAX polling
+ * NEXUS TRADER - Core Engine v4.0
+ * Architecture monobloc optimisée pour Hostinger (Mutualisé)
+ * Namespace: Nexus\Core
  */
 
-namespace IACrypto\Core;
+namespace Nexus\Core;
 
-error_reporting(E_ALL);
-ini_set('display_errors', 0);
-ini_set('log_errors', 1);
-set_time_limit(300);
+use PDO;
+use PDOException;
+use Exception;
 
 // Configuration
-define('DB_DIR', __DIR__ . '/../db/');
-define('CACHE_DIR', __DIR__ . '/../cache/');
-define('LOGS_DIR', __DIR__ . '/../logs/');
+define('NEXUS_DB_DIR', __DIR__ . '/../db/');
+define('NEXUS_CACHE_DIR', __DIR__ . '/../cache/');
+define('NEXUS_LOGS_DIR', __DIR__ . '/../logs/');
+define('NEXUS_LOCK_FILE', NEXUS_CACHE_DIR . 'brain.lock');
 
-// 3 API Keys Mistral en rotation
-define('MISTRAL_KEYS', [
-    ['key' => getenv('MISTRAL_API_KEY_1') ?: '', 'name' => 'primary', 'weight' => 50],
-    ['key' => getenv('MISTRAL_API_KEY_2') ?: '', 'name' => 'secondary', 'weight' => 30],
-    ['key' => getenv('MISTRAL_API_KEY_3') ?: '', 'name' => 'tertiary', 'weight' => 20]
+define('NEXUS_MISTRAL_KEYS', [
+    getenv('MISTRAL_API_KEY_1') ?: getenv('MISTRAL_API_KEY') ?: '',
+    getenv('MISTRAL_API_KEY_2') ?: '',
+    getenv('MISTRAL_API_KEY_3') ?: ''
 ]);
 
-define('MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1/chat/completions');
-define('COINGECKO_MARKETS', 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&sparkline=true');
-define('BINANCE_TICKER', 'https://api.binance.com/api/v3/ticker/24hr');
+define('NEXUS_MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1/chat/completions');
+define('NEXUS_COINGECKO_ENDPOINT', 'https://api.coingecko.com/api/v3/coins/markets');
 
-// Trading params
-define('INITIAL_CAPITAL', 1000000.00);
-define('TARGET_AGENTS', 50);
-define('AGENT_INITIAL_CAPITAL', 20000.00);
-define('TRADE_INTERVAL_SECONDS', 15);
-define('BRAIN_CYCLE_SECONDS', 30);
-define('MIN_CONFIDENCE_TRADE', 55);
+define('NEXUS_AGENT_INITIAL_CAPITAL', 1000.00);
+define('NEXUS_LIQUIDATION_THRESHOLD', -5.0);
+
+define('NEXUS_DNA_STRATEGIES', [
+    'scalping' => 'Trading rapide sur petites fluctuations 1-3%',
+    'trend_following' => 'Suit la tendance majeure sur 7-14 jours',
+    'mean_reversion' => 'Achète les dips, vend les pumps extrêmes',
+    'breakout' => 'Détecte et trade les cassures de résistance/support',
+    'momentum' => 'Trade les cryptos avec forte momentum 24h'
+]);
+
+class Database {
+    private $pdo;
+    private $dbPath;
+    
+    public function __construct($dbName = 'nexus_trader.db') {
+        $this->ensureDirectories();
+        $this->dbPath = NEXUS_DB_DIR . $dbName;
+        $this->connect();
+        $this->initTables();
+    }
+    
+    private function ensureDirectories() {
+        foreach ([NEXUS_DB_DIR, NEXUS_CACHE_DIR, NEXUS_LOGS_DIR] as $dir) {
+            if (!is_dir($dir)) mkdir($dir, 0777, true);
+        }
+    }
+    
+    private function connect() {
+        try {
+            $this->pdo = new PDO('sqlite:' . $this->dbPath);
+            $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            $this->pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+            $this->pdo->exec('PRAGMA journal_mode=WAL');
+            $this->pdo->exec('PRAGMA synchronous=NORMAL');
+            $this->pdo->exec('PRAGMA cache_size=10000');
+        } catch (PDOException $e) {
+            throw new Exception('Database connection failed: ' . $e->getMessage());
+        }
+    }
+    
+    private function initTables() {
+        $tables = [
+            'coins' => "CREATE TABLE IF NOT EXISTS coins (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT UNIQUE NOT NULL, name TEXT NOT NULL, price REAL NOT NULL, change_24h REAL, change_7d REAL, market_cap REAL, volume_24h REAL, image_url TEXT, last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            'agents' => "CREATE TABLE IF NOT EXISTS agents (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, dna TEXT NOT NULL, status TEXT DEFAULT 'active', capital REAL DEFAULT " . NEXUS_AGENT_INITIAL_CAPITAL . ", balance REAL DEFAULT " . NEXUS_AGENT_INITIAL_CAPITAL . ", total_trades INTEGER DEFAULT 0, wins INTEGER DEFAULT 0, losses INTEGER DEFAULT 0, total_pnl REAL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            'trades' => "CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, coin_symbol TEXT NOT NULL, type TEXT NOT NULL, amount REAL NOT NULL, price REAL NOT NULL, profit_loss REAL DEFAULT 0, status TEXT DEFAULT 'open', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, closed_at TIMESTAMP, FOREIGN KEY (agent_id) REFERENCES agents(id))",
+            'positions' => "CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, coin_symbol TEXT NOT NULL, amount REAL NOT NULL, avg_price REAL NOT NULL, current_value REAL, pnl REAL DEFAULT 0, pnl_percent REAL DEFAULT 0, status TEXT DEFAULT 'open', opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, closed_at TIMESTAMP, FOREIGN KEY (agent_id) REFERENCES agents(id))",
+            'rl_memory' => "CREATE TABLE IF NOT EXISTS rl_memory (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_name TEXT UNIQUE NOT NULL, success_count INTEGER DEFAULT 0, failure_count INTEGER DEFAULT 0, avg_profit REAL DEFAULT 0, total_profit REAL DEFAULT 0, last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            'console_logs' => "CREATE TABLE IF NOT EXISTS console_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT NOT NULL, level TEXT DEFAULT 'info', context TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+        ];
+        
+        foreach ($tables as $sql) {
+            $this->pdo->exec($sql);
+        }
+        $this->initializeRLMemory();
+    }
+    
+    private function initializeRLMemory() {
+        $stmt = $this->pdo->prepare("INSERT OR IGNORE INTO rl_memory (strategy_name, success_count, failure_count) VALUES (?, 0, 0)");
+        foreach (array_keys(NEXUS_DNA_STRATEGIES) as $strategy) {
+            $stmt->execute([$strategy]);
+        }
+    }
+    
+    public function getPDO() { return $this->pdo; }
+    
+    public function log($message, $level = 'info', $context = null) {
+        $stmt = $this->pdo->prepare("INSERT INTO console_logs (message, level, context) VALUES (?, ?, ?)");
+        $stmt->execute([$message, $level, $context ? json_encode($context) : null]);
+    }
+    
+    public function getStats() {
+        $stats = [];
+        $stmt = $this->pdo->query("SELECT COUNT(*) as count, SUM(capital) as total_capital, SUM(total_pnl) as total_pnl FROM agents WHERE status = 'active'");
+        $agentStats = $stmt->fetch();
+        $stats['agents_count'] = (int)($agentStats['count'] ?? 0);
+        $stats['total_capital'] = (float)($agentStats['total_capital'] ?? 0);
+        $stats['total_pnl'] = (float)($agentStats['total_pnl'] ?? 0);
+        
+        $stmt = $this->pdo->query("SELECT COUNT(*) as total, SUM(CASE WHEN profit_loss > 0 THEN 1 ELSE 0 END) as wins FROM trades WHERE status = 'closed'");
+        $tradeStats = $stmt->fetch();
+        $stats['total_trades'] = (int)($tradeStats['total'] ?? 0);
+        $wins = (int)($tradeStats['wins'] ?? 0);
+        $stats['win_rate'] = $stats['total_trades'] > 0 ? round(($wins / $stats['total_trades']) * 100, 2) : 0;
+        
+        $stmt = $this->pdo->query("SELECT COUNT(*) as count FROM positions WHERE status = 'open'");
+        $stats['open_positions'] = (int)$stmt->fetchColumn();
+        
+        return $stats;
+    }
+}
+
+class ApiManager {
+    private $mistralKeys = [];
+    private $currentKeyIndex = 0;
+    private $hasValidKeys = false;
+    
+    public function __construct() {
+        $keys = NEXUS_MISTRAL_KEYS;
+        foreach ($keys as $key) {
+            if (!empty(trim($key))) {
+                $this->mistralKeys[] = trim($key);
+            }
+        }
+        $this->hasValidKeys = !empty($this->mistralKeys);
+        if (!$this->hasValidKeys) {
+            error_log("NEXUS: No valid Mistral API keys - Simulation mode enabled");
+        }
+    }
+    
+    public function callMistral($prompt, $temperature = 0.7) {
+        if (!$this->hasValidKeys) {
+            return $this->simulateResponse($prompt);
+        }
+        
+        $apiKey = $this->getCurrentKey();
+        $systemPrompt = $this->getSystemPrompt();
+        
+        $data = [
+            'model' => 'mistral-small-latest',
+            'messages' => [
+                ['role' => 'system', 'content' => $systemPrompt],
+                ['role' => 'user', 'content' => $prompt]
+            ],
+            'temperature' => $temperature,
+            'max_tokens' => 1000
+        ];
+        
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'POST',
+                'header' => [
+                    'Content-Type: application/json',
+                    'Authorization: Bearer ' . $apiKey,
+                    'Accept: application/json'
+                ],
+                'content' => json_encode($data),
+                'timeout' => 30,
+                'ignore_errors' => true
+            ]
+        ]);
+        
+        $response = @file_get_contents(NEXUS_MISTRAL_ENDPOINT, false, $context);
+        
+        if ($response === false) {
+            $this->rotateKey();
+            return $this->simulateResponse($prompt);
+        }
+        
+        $decoded = json_decode($response, true);
+        
+        if (!$decoded || isset($decoded['error'])) {
+            $this->rotateKey();
+            return $this->simulateResponse($prompt);
+        }
+        
+        return $decoded['choices'][0]['message']['content'] ?? $this->simulateResponse($prompt);
+    }
+    
+    private function getCurrentKey() {
+        return $this->mistralKeys[$this->currentKeyIndex % count($this->mistralKeys)];
+    }
+    
+    private function rotateKey() {
+        $this->currentKeyIndex++;
+    }
+    
+    private function getSystemPrompt() {
+        return "Tu es l'unite centrale NEXUS-1. Ton role est de gerer une flotte d'agents de trading crypto.\n\nAnalyse les prix actuels, les variations 24h et le sentiment du marche.\n\nSi un agent est en perte de plus de 5%, ordonne sa liquidation.\n\nSi des opportunites existent, cree un nouvel agent avec une strategie specifique (DNA) et un nom unique.\n\nApprends des trades passes : si la strategie 'Breakout' a echoue 3 fois, essaie une approche 'Mean Reversion'.\nTu dois repondre exclusivement en JSON avec ce format : { \"action\": \"create_agent\"|\"liquidate\"|\"wait\", \"reasoning\": \"...\", \"agent_config\": {...} }.";
+    }
+    
+    public function fetchMarketData() {
+        $url = NEXUS_COINGECKO_ENDPOINT . '?vs_currency=usd&order=market_cap_desc&per_page=50&page=1&sparkline=false';
+        
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => [
+                    'User-Agent: Mozilla/5.0 (compatible; NexusTrader/1.0)',
+                    'Accept: application/json'
+                ],
+                'timeout' => 15
+            ]
+        ]);
+        
+        $response = @file_get_contents($url, false, $context);
+        
+        if ($response === false) {
+            throw new Exception("Failed to fetch market data from CoinGecko");
+        }
+        
+        $data = json_decode($response, true);
+        if (!$data) {
+            throw new Exception("Invalid response from CoinGecko API");
+        }
+        
+        return $data;
+    }
+    
+    private function simulateResponse($prompt) {
+        $actions = ['wait', 'wait', 'wait', 'create_agent'];
+        $action = $actions[array_rand($actions)];
+        
+        if ($action === 'create_agent') {
+            $strategies = array_keys(NEXUS_DNA_STRATEGIES);
+            $dna = $strategies[array_rand($strategies)];
+            $coins = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX'];
+            $coin = $coins[array_rand($coins)];
+            
+            return json_encode([
+                'action' => 'create_agent',
+                'reasoning' => "Opportunite detectee sur $coin avec strategie $dna",
+                'agent_config' => [
+                    'name' => 'NEXUS-' . strtoupper(substr(md5(time() . rand()), 0, 4)),
+                    'dna' => $dna,
+                    'capital' => NEXUS_AGENT_INITIAL_CAPITAL
+                ]
+            ]);
+        }
+        
+        return json_encode([
+            'action' => 'wait',
+            'reasoning' => 'Marche en consolidation, attente de signaux clairs'
+        ]);
+    }
+}
+
+class MarketData {
+    private $db;
+    private $api;
+    
+    public function __construct(Database $db, ApiManager $api) {
+        $this->db = $db;
+        $this->api = $api;
+    }
+    
+    public function updateMarketData() {
+        try {
+            $rawData = $this->api->fetchMarketData();
+            
+            $stmt = $this->db->getPDO()->prepare(
+                "INSERT OR REPLACE INTO coins (symbol, name, price, change_24h, change_7d, market_cap, volume_24h, image_url, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"
+            );
+            
+            foreach ($rawData as $coin) {
+                $stmt->execute([
+                    strtoupper($coin['symbol']),
+                    $coin['name'],
+                    $coin['current_price'],
+                    $coin['price_change_percentage_24h'] ?? null,
+                    $coin['price_change_percentage_7d_in_currency'] ?? $coin['price_change_percentage_7d'] ?? null,
+                    $coin['market_cap'],
+                    $coin['total_volume'],
+                    $coin['image'] ?? null
+                ]);
+            }
+            
+            return count($rawData);
+        } catch (Exception $e) {
+            $this->db->log("MarketData update error: " . $e->getMessage(), 'error');
+            return 0;
+        }
+    }
+    
+    public function getTopCoins($limit = 20) {
+        $stmt = $this->db->getPDO()->prepare("SELECT * FROM coins ORDER BY market_cap DESC LIMIT ?");
+        $stmt->execute([$limit]);
+        return $stmt->fetchAll();
+    }
+    
+    public function getCoinPrice($symbol) {
+        $stmt = $this->db->getPDO()->prepare("SELECT price FROM coins WHERE symbol = ?");
+        $stmt->execute([strtoupper($symbol)]);
+        $result = $stmt->fetch();
+        return $result ? (float)$result['price'] : 0;
+    }
+}
+
+class Brain {
+    private $db;
+    private $api;
+    private $marketData;
+    
+    public function __construct(Database $db, ApiManager $api, MarketData $marketData) {
+        $this->db = $db;
+        $this->api = $api;
+        $this->marketData = $marketData;
+    }
+    
+    public function executeCycle() {
+        try {
+            $updatedCount = $this->marketData->updateMarketData();
+            $topCoins = $this->marketData->getTopCoins(10);
+            $activeAgents = $this->getActiveAgents();
+            $agentsToLiquidate = $this->checkAgentsForLiquidation();
+            
+            $context = [
+                'top_coins' => $topCoins,
+                'active_agents' => $activeAgents,
+                'agents_to_liquidate' => $agentsToLiquidate,
+                'timestamp' => date('Y-m-d H:i:s')
+            ];
+            
+            $decision = $this->makeDecision($context);
+            $this->executeActions($decision);
+            
+            $this->db->log("Brain cycle completed", 'info', [
+                'coins_updated' => $updatedCount,
+                'decision' => $decision['action'] ?? 'none',
+                'active_agents' => count($activeAgents)
+            ]);
+            
+            return $decision;
+        } catch (Exception $e) {
+            $this->db->log("Brain cycle error: " . $e->getMessage(), 'error');
+            return ['action' => 'wait', 'reasoning' => 'Error: ' . $e->getMessage()];
+        }
+    }
+    
+    private function checkAgentsForLiquidation() {
+        $stmt = $this->db->getPDO()->query(
+            "SELECT id, name, capital, balance, ((balance - capital) / capital * 100) as pnl_percent FROM agents WHERE status = 'active'"
+        );
+        $agents = $stmt->fetchAll();
+        $toLiquidate = [];
+        
+        foreach ($agents as $agent) {
+            if ($agent['pnl_percent'] <= NEXUS_LIQUIDATION_THRESHOLD) {
+                $toLiquidate[] = $agent;
+            }
+        }
+        
+        return $toLiquidate;
+    }
+    
+    private function makeDecision($context) {
+        $prompt = "Contexte marche:\n" . json_encode($context, JSON_PRETTY_PRINT);
+        $prompt .= "\n\nPrends une decision selon ton role NEXUS-1.";
+        
+        try {
+            $response = $this->api->callMistral($prompt);
+            
+            $jsonStart = strpos($response, '{');
+            $jsonEnd = strrpos($response, '}');
+            
+            if ($jsonStart !== false && $jsonEnd !== false) {
+                $jsonStr = substr($response, $jsonStart, $jsonEnd - $jsonStart + 1);
+                $decision = json_decode($jsonStr, true);
+                
+                if ($decision && isset($decision['action'])) {
+                    return $decision;
+                }
+            }
+            
+            return ['action' => 'wait', 'reasoning' => 'Could not parse AI response'];
+        } catch (Exception $e) {
+            return ['action' => 'wait', 'reasoning' => 'AI error: ' . $e->getMessage()];
+        }
+    }
+    
+    private function executeActions($decision) {
+        switch ($decision['action']) {
+            case 'create_agent':
+                if (isset($decision['agent_config'])) {
+                    $this->createAgent($decision['agent_config']);
+                }
+                break;
+            case 'liquidate':
+                if (isset($decision['agent_config']['id'])) {
+                    $this->liquidateAgent($decision['agent_config']['id']);
+                }
+                break;
+        }
+    }
+    
+    private function createAgent($config) {
+        $name = $config['name'] ?? 'NEXUS-' . time();
+        $dna = $config['dna'] ?? 'momentum';
+        $capital = $config['capital'] ?? NEXUS_AGENT_INITIAL_CAPITAL;
+        
+        $stmt = $this->db->getPDO()->prepare("SELECT COUNT(*) FROM agents WHERE name = ?");
+        $stmt->execute([$name]);
+        if ($stmt->fetchColumn() > 0) {
+            $name .= '-' . substr(md5(time()), 0, 4);
+        }
+        
+        try {
+            $stmt = $this->db->getPDO()->prepare(
+                "INSERT INTO agents (name, dna, capital, balance) VALUES (?, ?, ?, ?)"
+            );
+            $stmt->execute([$name, $dna, $capital, $capital]);
+            
+            $this->db->log("Created agent: $name (DNA: $dna)", 'info');
+            $this->updateRLMemory($dna, true);
+        } catch (Exception $e) {
+            $this->db->log("Failed to create agent: " . $e->getMessage(), 'error');
+        }
+    }
+    
+    private function liquidateAgent($agentId) {
+        try {
+            $stmt = $this->db->getPDO()->prepare(
+                "UPDATE agents SET status = 'liquidated', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+            );
+            $stmt->execute([$agentId]);
+            $this->db->log("Liquidated agent ID: $agentId", 'info');
+        } catch (Exception $e) {
+            $this->db->log("Failed to liquidate agent: " . $e->getMessage(), 'error');
+        }
+    }
+    
+    private function getActiveAgents() {
+        $stmt = $this->db->getPDO()->query("SELECT * FROM agents WHERE status = 'active'");
+        return $stmt->fetchAll();
+    }
+    
+    private function updateRLMemory($strategy, $success) {
+        if ($success) {
+            $stmt = $this->db->getPDO()->prepare(
+                "UPDATE rl_memory SET success_count = success_count + 1, last_used = CURRENT_TIMESTAMP WHERE strategy_name = ?"
+            );
+        } else {
+            $stmt = $this->db->getPDO()->prepare(
+                "UPDATE rl_memory SET failure_count = failure_count + 1, last_used = CURRENT_TIMESTAMP WHERE strategy_name = ?"
+            );
+        }
+        $stmt->execute([$strategy]);
+    }
+}
+
+class AgentManager {
+    private $db;
+    
+    public function __construct(Database $db) {
+        $this->db = $db;
+    }
+    
+    public function getActiveAgents() {
+        $stmt = $this->db->getPDO()->query(
+            "SELECT * FROM agents WHERE status = 'active' ORDER BY total_pnl DESC"
+        );
+        return $stmt->fetchAll();
+    }
+    
+    public function getAgentById($id) {
+        $stmt = $this->db->getPDO()->prepare("SELECT * FROM agents WHERE id = ?");
+        $stmt->execute([$id]);
+        return $stmt->fetch();
+    }
+    
+    public function executeTrade($agentId, $coinSymbol, $type, $amount, $price) {
+        try {
+            $pdo = $this->db->getPDO();
+            $pdo->beginTransaction();
+            
+            $stmt = $pdo->prepare(
+                "INSERT INTO trades (agent_id, coin_symbol, type, amount, price, status) VALUES (?, ?, ?, ?, ?, 'closed')"
+            );
+            $stmt->execute([$agentId, $coinSymbol, $type, $amount, $price]);
+            
+            $agent = $this->getAgentById($agentId);
+            if (!$agent) {
+                $pdo->rollBack();
+                return false;
+            }
+            
+            $tradeValue = $amount * $price;
+            $newBalance = $type === 'buy' ? $agent['balance'] - $tradeValue : $agent['balance'] + $tradeValue;
+            
+            $stmt = $pdo->prepare(
+                "UPDATE agents SET balance = ?, total_trades = total_trades + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+            );
+            $stmt->execute([$newBalance, $agentId]);
+            
+            $pdo->commit();
+            return true;
+        } catch (Exception $e) {
+            $this->db->getPDO()->rollBack();
+            $this->db->log("Trade execution error: " . $e->getMessage(), 'error');
+            return false;
+        }
+    }
+}
 
 class Engine {
     private static $instance = null;
-    private $apiRotation;
     private $db;
+    private $api;
+    private $marketData;
     private $brain;
     private $agentManager;
-    private $market;
-    private $cache;
-    private $rlMemory;
     
     private function __construct() {
-        $this->ensureDirectories();
-        $this->cache = new Cache();
-        $this->apiRotation = new ApiRotation();
         $this->db = new Database();
-        $this->market = new MarketData($this->db, $this->cache);
-        $this->db->setMarket($this->market);
-        $this->db->setApiRotation($this->apiRotation);
-        $this->rlMemory = new RLMemory($this->db);
-        $this->agentManager = new AgentManager($this->db, $this->apiRotation, $this->rlMemory);
-        $this->brain = new Brain($this->db, $this->agentManager, $this->rlMemory);
-        $this->db->init();
+        $this->api = new ApiManager();
+        $this->marketData = new MarketData($this->db, $this->api);
+        $this->brain = new Brain($this->db, $this->api, $this->marketData);
+        $this->agentManager = new AgentManager($this->db);
     }
     
     public static function getInstance() {
@@ -67,967 +533,17 @@ class Engine {
         return self::$instance;
     }
     
-    private function ensureDirectories() {
-        foreach ([DB_DIR, CACHE_DIR, LOGS_DIR] as $dir) {
-            if (!is_dir($dir)) mkdir($dir, 0755, true);
-        }
-    }
-    
-    public function getApiRotation() { return $this->apiRotation; }
     public function getDatabase() { return $this->db; }
+    public function getApiManager() { return $this->api; }
+    public function getMarketData() { return $this->marketData; }
     public function getBrain() { return $this->brain; }
     public function getAgentManager() { return $this->agentManager; }
-    public function getMarket() { return $this->market; }
-    public function getCache() { return $this->cache; }
-    public function getRLMemory() { return $this->rlMemory; }
     
     public function runBrainCycle() {
-        return $this->brain->runCycle();
+        return $this->brain->executeCycle();
     }
     
     public function getSystemStats() {
         return $this->db->getStats();
-    }
-}
-
-class ApiRotation {
-    private $keys = [];
-    private $stats = [];
-    private $statsFile;
-    
-    public function __construct() {
-        $this->statsFile = CACHE_DIR . 'api_stats.json';
-        $this->loadKeys();
-        $this->loadStats();
-    }
-    
-    private function loadKeys() {
-        foreach (MISTRAL_KEYS as $config) {
-            if (!empty($config['key'])) {
-                $this->keys[] = [
-                    'key' => $config['key'],
-                    'name' => $config['name'],
-                    'weight' => $config['weight'],
-                    'health' => 100,
-                    'requests' => 0,
-                    'errors' => 0,
-                    'last_error' => 0,
-                    'avg_latency' => 0
-                ];
-            }
-        }
-        if (empty($this->keys)) {
-            error_log("Aucune API key Mistral - mode simulation");
-        }
-    }
-    
-    private function loadStats() {
-        if (file_exists($this->statsFile)) {
-            $data = json_decode(file_get_contents($this->statsFile), true);
-            if ($data) {
-                foreach ($this->keys as &$key) {
-                    if (isset($data[$key['name']])) {
-                        $key = array_merge($key, $data[$key['name']]);
-                    }
-                }
-            }
-        }
-    }
-    
-    private function saveStats() {
-        $data = [];
-        foreach ($this->keys as $key) {
-            $data[$key['name']] = [
-                'health' => $key['health'],
-                'requests' => $key['requests'],
-                'errors' => $key['errors'],
-                'last_error' => $key['last_error'],
-                'avg_latency' => $key['avg_latency']
-            ];
-        }
-        file_put_contents($this->statsFile, json_encode($data, JSON_PRETTY_PRINT));
-    }
-    
-    public function selectKey() {
-        if (empty($this->keys)) return null;
-        $healthyKeys = array_filter($this->keys, function($k) { return $k['health'] > 30; });
-        if (empty($healthyKeys)) $healthyKeys = $this->keys;
-        
-        $totalWeight = 0;
-        foreach ($healthyKeys as &$key) {
-            $key['effective_weight'] = $key['weight'] * ($key['health'] / 100);
-            $totalWeight += $key['effective_weight'];
-        }
-        
-        $rand = mt_rand() / mt_getrandmax() * $totalWeight;
-        $cumulative = 0;
-        foreach ($healthyKeys as $key) {
-            $cumulative += $key['effective_weight'];
-            if ($rand <= $cumulative) return $key;
-        }
-        return end($healthyKeys);
-    }
-    
-    public function call($messages, $model = 'mistral-small-2506', $maxTokens = 2000, $temperature = 0.7, $maxRetries = 3) {
-        if (empty($this->keys)) return $this->simulateResponse($messages);
-        
-        $attempt = 0;
-        while ($attempt < $maxRetries) {
-            $selectedKey = $this->selectKey();
-            if (!$selectedKey) return $this->simulateResponse($messages);
-            
-            $startTime = microtime(true);
-            $result = $this->executeRequest($selectedKey, $messages, $model, $maxTokens, $temperature);
-            $latency = (microtime(true) - $startTime) * 1000;
-            
-            $this->updateKeyStats($selectedKey['name'], $latency, $result !== null);
-            
-            if ($result !== null) return $result;
-            $attempt++;
-            if ($attempt < $maxRetries) usleep(500000);
-        }
-        return $this->simulateResponse($messages);
-    }
-    
-    private function executeRequest($keyConfig, $messages, $model, $maxTokens, $temperature) {
-        $totalLen = 0;
-        foreach ($messages as $m) $totalLen += strlen($m['content']);
-        if ($totalLen > 40000) $model = 'mistral-small-2603';
-        
-        $payload = json_encode([
-            'model' => $model,
-            'max_tokens' => $maxTokens,
-            'messages' => $messages,
-            'temperature' => $temperature,
-        ]);
-        
-        $opts = stream_context_create([
-            'http' => [
-                'method' => 'POST',
-                'header' => "Content-Type: application/json\r\n" .
-                           "Authorization: Bearer {$keyConfig['key']}\r\n" .
-                           "Accept: application/json\r\n",
-                'content' => $payload,
-                'timeout' => 120,
-                'ignore_errors' => true,
-            ]
-        ]);
-        
-        $raw = @file_get_contents(MISTRAL_ENDPOINT, false, $opts);
-        if (!$raw) {
-            $this->recordError($keyConfig['name']);
-            return null;
-        }
-        
-        $data = json_decode($raw, true);
-        if (isset($data['error'])) {
-            error_log("Erreur Mistral: " . json_encode($data['error']));
-            $this->recordError($keyConfig['name']);
-            if (isset($data['error']['code']) && $data['error']['code'] === 'rate_limit') {
-                $this->decreaseHealth($keyConfig['name'], 40);
-            }
-            return null;
-        }
-        
-        return isset($data['choices'][0]['message']['content']) ? $data['choices'][0]['message']['content'] : null;
-    }
-    
-    private function updateKeyStats($keyName, $latency, $success) {
-        foreach ($this->keys as &$key) {
-            if ($key['name'] === $keyName) {
-                $key['requests']++;
-                $alpha = 0.1;
-                $key['avg_latency'] = $alpha * $latency + (1 - $alpha) * $key['avg_latency'];
-                $key['health'] = $success ? min(100, $key['health'] + 2) : max(0, $key['health'] - 10);
-                break;
-            }
-        }
-        $this->saveStats();
-    }
-    
-    private function recordError($keyName) {
-        foreach ($this->keys as &$key) {
-            if ($key['name'] === $keyName) {
-                $key['errors']++;
-                $key['last_error'] = time();
-                $key['health'] = max(0, $key['health'] - 15);
-                break;
-            }
-        }
-        $this->saveStats();
-    }
-    
-    private function decreaseHealth($keyName, $amount) {
-        foreach ($this->keys as &$key) {
-            if ($key['name'] === $keyName) {
-                $key['health'] = max(0, $key['health'] - $amount);
-                break;
-            }
-        }
-        $this->saveStats();
-    }
-    
-    private function simulateResponse($messages) {
-        $lastMsg = end($messages);
-        $content = isset($lastMsg['content']) ? $lastMsg['content'] : '';
-        
-        // Generate realistic trading decision based on market context
-        if (strpos($content, 'JSON') !== false && strpos($content, 'action') !== false) {
-            // Extract coin mentions from context
-            $coins = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'DOT', 'LINK'];
-            $selectedCoin = $coins[array_rand($coins)];
-            
-            // Simple momentum logic: random but weighted towards buy in bull market
-            $rand = mt_rand() / mt_getrandmax();
-            $actions = $rand > 0.6 ? ['buy', 'buy', 'hold'] : ($rand > 0.3 ? ['hold', 'hold', 'sell'] : ['sell', 'hold', 'buy']);
-            $action = $actions[array_rand($actions)];
-            
-            $amounts = [500, 750, 1000, 1250, 1500, 2000];
-            
-            return json_encode([
-                'action' => $action,
-                'coin' => $selectedCoin,
-                'amount_brics' => $amounts[array_rand($amounts)],
-                'reasoning' => $this->generateReasoning($action, $selectedCoin),
-                'confidence' => rand(68, 92),
-                'timeframe' => ['short', 'short', 'medium'][array_rand(['short', 'short', 'medium'])]
-            ], JSON_PRETTY_PRINT);
-        }
-        
-        if (strpos($content, 'Crée') !== false || strpos($content, 'agents') !== false || strpos($content, 'create_agents') !== false) {
-            $strategies = [
-                ['type' => 'momentum', 'prompt' => 'Trade les cryptos avec forte momentum positive sur 24h'],
-                ['type' => 'mean_reversion', 'prompt' => 'Achète les dips sur supports clés, vend sur résistances'],
-                ['type' => 'breakout', 'prompt' => 'Détecte et trade les breakouts de consolidation'],
-                ['type' => 'scalping', 'prompt' => 'Trading rapide sur petites fluctuations 1-5%'],
-                ['type' => 'trend_following', 'prompt' => 'Suit la tendance majeure sur 7 jours']
-            ];
-            $strategy = $strategies[array_rand($strategies)];
-            
-            return json_encode([
-                'agents' => [[
-                    'name' => 'AI Trader ' . strtoupper(substr(md5(time() . rand()), 0, 4)),
-                    'strategy_prompt' => $strategy['prompt'],
-                    'strategy_type' => $strategy['type'],
-                    'timeframe' => ['short', 'short', 'medium'][array_rand(['short', 'short', 'medium'])]
-                ]]
-            ], JSON_PRETTY_PRINT);
-        }
-        
-        // Brain analysis response
-        if (strpos($content, 'cerveau') !== false || strpos($content, 'analyse') !== false) {
-            return json_encode([
-                'analysis' => "Marché en consolidation. Opportunités sur altcoins avec fort volume.",
-                'create_agents' => [],
-                'archive_agents' => [],
-                'trading_signal' => [
-                    'action' => 'hold',
-                    'coin' => 'BTC',
-                    'reasoning' => 'Attente de confirmation de direction',
-                    'confidence' => 72
-                ]
-            ], JSON_PRETTY_PRINT);
-        }
-        
-        return "Simulation: Analyse positive.";
-    }
-    
-    private function generateReasoning($action, $coin) {
-        $reasons = [
-            'buy' => [
-                "Forte accumulation détectée sur $coin",
-                "RSI en zone de survente, rebond probable",
-                "Volume en hausse + cassure résistance",
-                "Divergence haussière sur MACD",
-                "Support historique testé avec succès"
-            ],
-            'sell' => [
-                "Prise de profits après belle hausse",
-                "Résistance majeure atteinte sur $coin",
-                "RSI en surachat, correction attendue",
-                "Volume de vente en augmentation",
-                "Cassure support court terme"
-            ],
-            'hold' => [
-                "Marché en consolidation, attente de signal",
-                "Position maintenue, tendance intacte",
-                "Pas de signal clair, on observe",
-                "Ratio risque/rendement non optimal"
-            ]
-        ];
-        
-        $list = $reasons[$action] ?? $reasons['hold'];
-        return $list[array_rand($list)];
-    }
-    
-    public function getKeyStats() {
-        $result = [];
-        foreach ($this->keys as $key) {
-            $result[] = [
-                'name' => $key['name'],
-                'health' => $key['health'],
-                'requests' => $key['requests'],
-                'errors' => $key['errors'],
-                'avg_latency' => round($key['avg_latency'], 2),
-                'status' => $key['health'] > 70 ? 'excellent' : ($key['health'] > 30 ? 'good' : 'degraded')
-            ];
-        }
-        return $result;
-    }
-}
-
-class Database {
-    private $connections = [];
-    private $market;
-    private $apiRotation;
-    
-    public function __construct() {
-        // Will be set by Engine after instantiation
-    }
-    
-    public function setMarket($market) { $this->market = $market; }
-    public function setApiRotation($api) { $this->apiRotation = $api; }
-    public function getMarket() { return $this->market; }
-    public function getApiRotation() { return $this->apiRotation; }
-    
-    public function getConnection($dbName = 'main') {
-        if (!isset($this->connections[$dbName])) {
-            $path = DB_DIR . $dbName . '.db';
-            $pdo = new \PDO('sqlite:' . $path);
-            $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
-            $pdo->exec('PRAGMA journal_mode=WAL');
-            $pdo->exec('PRAGMA synchronous=NORMAL');
-            $pdo->exec('PRAGMA cache_size=10000');
-            $this->connections[$dbName] = $pdo;
-        }
-        return $this->connections[$dbName];
-    }
-    
-    public function init() {
-        $db = $this->getConnection('main');
-        
-        $tables = [
-            "CREATE TABLE IF NOT EXISTS coins (
-                id TEXT PRIMARY KEY,
-                symbol TEXT NOT NULL,
-                name TEXT NOT NULL,
-                current_price REAL DEFAULT 0,
-                market_cap REAL DEFAULT 0,
-                market_cap_rank INTEGER,
-                volume_24h REAL DEFAULT 0,
-                price_change_24h REAL DEFAULT 0,
-                price_change_pct_24h REAL DEFAULT 0,
-                price_change_7d REAL DEFAULT 0,
-                sparkline_7d TEXT DEFAULT '[]',
-                image_url TEXT,
-                updated_at INTEGER DEFAULT 0
-            )",
-            "CREATE TABLE IF NOT EXISTS agents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                name TEXT NOT NULL,
-                strategy_prompt TEXT NOT NULL,
-                strategy_type TEXT DEFAULT 'custom',
-                capital_brics REAL DEFAULT 10000.00,
-                total_pnl REAL DEFAULT 0,
-                total_pnl_percent REAL DEFAULT 0,
-                win_rate REAL DEFAULT 0,
-                total_trades INTEGER DEFAULT 0,
-                drawdown_max REAL DEFAULT 0,
-                status TEXT DEFAULT 'active',
-                is_master INTEGER DEFAULT 0,
-                generation INTEGER DEFAULT 1,
-                parent_ids TEXT DEFAULT '[]',
-                reinforcement_score REAL DEFAULT 0,
-                timeframe TEXT DEFAULT 'short',
-                created_at INTEGER DEFAULT 0,
-                last_action_at INTEGER,
-                last_trade_at INTEGER DEFAULT 0
-            )",
-            "CREATE TABLE IF NOT EXISTS agent_trades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id INTEGER NOT NULL,
-                coin_symbol TEXT NOT NULL,
-                action TEXT NOT NULL,
-                price REAL NOT NULL,
-                quantity REAL NOT NULL,
-                value_brics REAL NOT NULL,
-                pnl REAL DEFAULT 0,
-                pnl_percent REAL DEFAULT 0,
-                reasoning TEXT,
-                timeframe TEXT DEFAULT 'short',
-                executed_at INTEGER DEFAULT 0
-            )",
-            "CREATE TABLE IF NOT EXISTS brain_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                action TEXT NOT NULL,
-                details TEXT,
-                agents_created INTEGER DEFAULT 0,
-                agents_archived INTEGER DEFAULT 0,
-                trade_executed INTEGER DEFAULT 0,
-                created_at INTEGER DEFAULT 0
-            )",
-            "CREATE TABLE IF NOT EXISTS system_config (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                updated_at INTEGER DEFAULT 0
-            )",
-            "CREATE TABLE IF NOT EXISTS console_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                log_type TEXT NOT NULL,
-                message TEXT NOT NULL,
-                data TEXT DEFAULT '{}',
-                created_at INTEGER DEFAULT 0
-            )",
-            "CREATE TABLE IF NOT EXISTS rl_memory (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                state_hash TEXT NOT NULL,
-                state_data TEXT NOT NULL,
-                action_taken TEXT NOT NULL,
-                reward REAL DEFAULT 0,
-                episode_id TEXT,
-                created_at INTEGER DEFAULT 0
-            )",
-            "CREATE TABLE IF NOT EXISTS open_positions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id INTEGER NOT NULL,
-                coin_symbol TEXT NOT NULL,
-                coin_id TEXT,
-                quantity REAL NOT NULL,
-                avg_buy_price REAL NOT NULL,
-                total_invested REAL NOT NULL,
-                current_value REAL DEFAULT 0,
-                unrealized_pnl REAL DEFAULT 0,
-                opened_at INTEGER DEFAULT 0
-            )",
-            "CREATE INDEX IF NOT EXISTS idx_positions_agent ON open_positions(agent_id)",
-            "CREATE INDEX IF NOT EXISTS idx_positions_symbol ON open_positions(coin_symbol)"
-        ];
-        
-        foreach ($tables as $sql) {
-            try { $db->exec($sql); } catch (\Exception $e) {}
-        }
-        
-        $db->exec("INSERT OR IGNORE INTO system_config (key, value) VALUES ('last_market_update', '0')");
-        $db->exec("INSERT OR IGNORE INTO system_config (key, value) VALUES ('last_brain_run', '0')");
-        $db->exec("INSERT OR IGNORE INTO system_config (key, value) VALUES ('total_brics_capital', '" . INITIAL_CAPITAL . "')");
-    }
-    
-    public function getStats() {
-        $db = $this->getConnection('main');
-        $totalCapital = INITIAL_CAPITAL;
-        $agentsCapital = (float)$db->query("SELECT COALESCE(SUM(capital_brics), 0) FROM agents WHERE status='active'")->fetchColumn();
-        $investedCapital = (float)$db->query("SELECT COALESCE(SUM(current_value), 0) FROM open_positions")->fetchColumn();
-        $realizedPnl = (float)$db->query("SELECT COALESCE(SUM(pnl), 0) FROM agent_trades WHERE action='sell'")->fetchColumn();
-        $unrealizedPnl = (float)$db->query("SELECT COALESCE(SUM(unrealized_pnl), 0) FROM open_positions")->fetchColumn();
-        $currentTotalCapital = $agentsCapital + $investedCapital + $realizedPnl;
-        $agentsCount = (int)$db->query("SELECT COUNT(*) FROM agents WHERE status='active'")->fetchColumn();
-        $totalTrades = (int)$db->query("SELECT COUNT(*) FROM agent_trades")->fetchColumn();
-        $winningTrades = (int)$db->query("SELECT COUNT(*) FROM agent_trades WHERE action='sell' AND pnl > 0")->fetchColumn();
-        $winRate = $totalTrades > 0 ? ($winningTrades / $totalTrades) * 100 : 0;
-        
-        return [
-            'total_capital' => round($currentTotalCapital, 2),
-            'pool_capital' => round($agentsCapital, 2),
-            'invested_capital' => round($investedCapital, 2),
-            'realized_pnl' => round($realizedPnl, 2),
-            'unrealized_pnl' => round($unrealizedPnl, 2),
-            'total_pnl' => round($realizedPnl + $unrealizedPnl, 2),
-            'agents_count' => $agentsCount,
-            'total_trades' => $totalTrades,
-            'win_rate' => round($winRate, 2)
-        ];
-    }
-    
-    public function logConsole($type, $message, $data = []) {
-        $db = $this->getConnection('main');
-        $stmt = $db->prepare("INSERT INTO console_logs (log_type, message, data, created_at) VALUES (?, ?, ?, ?)");
-        $stmt->execute([$type, $message, json_encode($data), time()]);
-        
-        // Cleanup old logs
-        $db->exec("DELETE FROM console_logs WHERE created_at < " . (time() - 3600));
-    }
-}
-
-class Cache {
-    private $memory = [];
-    private $fileDir;
-    
-    public function __construct() {
-        $this->fileDir = CACHE_DIR;
-    }
-    
-    public function get($key, $ttl = 300) {
-        if (isset($this->memory[$key])) {
-            $item = $this->memory[$key];
-            if ($item['expires'] > time()) return $item['data'];
-            unset($this->memory[$key]);
-        }
-        
-        $file = $this->fileDir . 'cache_' . md5($key) . '.json';
-        if (file_exists($file)) {
-            $data = json_decode(file_get_contents($file), true);
-            if ($data && $data['expires'] > time()) {
-                $this->memory[$key] = $data;
-                return $data['data'];
-            }
-        }
-        return null;
-    }
-    
-    public function set($key, $value, $ttl = 300) {
-        $item = ['data' => $value, 'expires' => time() + $ttl, 'created' => time()];
-        $this->memory[$key] = $item;
-        $file = $this->fileDir . 'cache_' . md5($key) . '.json';
-        file_put_contents($file, json_encode($item));
-    }
-}
-
-class RLMemory {
-    private $db;
-    
-    public function __construct($db) {
-        $this->db = $db;
-    }
-    
-    public function store($state, $action, $reward, $episodeId) {
-        $db = $this->db->getConnection('main');
-        $stateHash = md5(json_encode($state));
-        $stmt = $db->prepare("INSERT INTO rl_memory (state_hash, state_data, action_taken, reward, episode_id, created_at) VALUES (?, ?, ?, ?, ?, ?)");
-        $stmt->execute([$stateHash, json_encode($state), $action, $reward, $episodeId, time()]);
-    }
-    
-    public function getSimilarStates($currentState, $limit = 10) {
-        // Simplified: return recent memories
-        $db = $this->db->getConnection('main');
-        $stmt = $db->prepare("SELECT * FROM rl_memory ORDER BY created_at DESC LIMIT ?");
-        $stmt->execute([$limit]);
-        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    }
-    
-    public function updateFromReward($episodeId, $finalReward) {
-        $db = $this->db->getConnection('main');
-        $stmt = $db->prepare("UPDATE rl_memory SET reward = ? WHERE episode_id = ?");
-        $stmt->execute([$finalReward, $episodeId]);
-    }
-}
-
-class MarketData {
-    private $db;
-    private $cache;
-    
-    public function __construct($db, $cache) {
-        $this->db = $db;
-        $this->cache = $cache;
-    }
-    
-    public function update() {
-        $cacheKey = 'coingecko_markets';
-        $cached = $this->cache->get($cacheKey, 60);
-        
-        if ($cached && is_array($cached) && count($cached) > 0) {
-            $this->storeCoins($cached);
-            return count($cached);
-        }
-        
-        $ch = curl_init(COINGECKO_MARKETS);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        
-        if (!$response || $httpCode != 200) {
-            error_log("CoinGecko API error: HTTP $httpCode");
-            // Return cached data or empty array on failure
-            return 0;
-        }
-        
-        $data = json_decode($response, true);
-        if (!isset($data) || !is_array($data) || isset($data['status'])) {
-            error_log("CoinGecko API invalid response: " . json_encode($data));
-            return 0;
-        }
-        
-        $this->cache->set($cacheKey, $data, 60);
-        $this->storeCoins($data);
-        
-        // Fetch page 2 for more coins
-        $this->fetchPage(2);
-        
-        return count($data);
-    }
-    
-    private function fetchPage($page) {
-        $url = str_replace('page=1', 'page=' . $page, COINGECKO_MARKETS);
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        
-        if ($response && $httpCode == 200) {
-            $data = json_decode($response, true);
-            if (isset($data) && is_array($data) && !isset($data['status'])) {
-                $this->cache->set('coingecko_page_' . $page, $data, 60);
-                $this->storeCoins($data);
-            }
-        }
-    }
-    
-    private function storeCoins($coins) {
-        $db = $this->db->getConnection('main');
-        $stmt = $db->prepare("INSERT OR REPLACE INTO coins 
-            (id, symbol, name, current_price, market_cap, market_cap_rank, volume_24h, 
-             price_change_24h, price_change_pct_24h, price_change_7d, sparkline_7d, image_url, updated_at) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        
-        foreach ($coins as $coin) {
-            // Skip invalid entries
-            if (!isset($coin['id']) || !isset($coin['symbol']) || !isset($coin['name'])) {
-                continue;
-            }
-            $sparkline = isset($coin['sparkline_in_7d']['price']) ? json_encode($coin['sparkline_in_7d']['price']) : '[]';
-            $stmt->execute([
-                $coin['id'],
-                strtoupper($coin['symbol']),
-                $coin['name'],
-                $coin['current_price'] ?? 0,
-                $coin['market_cap'] ?? 0,
-                $coin['market_cap_rank'] ?? 0,
-                $coin['total_volume'] ?? 0,
-                $coin['price_change_24h'] ?? 0,
-                $coin['price_change_percentage_24h'] ?? 0,
-                $coin['price_change_percentage_7d_in_currency'] ?? 0,
-                $sparkline,
-                $coin['image'] ?? '',
-                time()
-            ]);
-        }
-    }
-    
-    public function getCoins($limit = 100) {
-        $db = $this->db->getConnection('main');
-        $stmt = $db->prepare("SELECT * FROM coins ORDER BY market_cap_rank ASC LIMIT ?");
-        $stmt->execute([$limit]);
-        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    }
-    
-    public function getCoin($symbol) {
-        $db = $this->db->getConnection('main');
-        $stmt = $db->prepare("SELECT * FROM coins WHERE symbol = ?");
-        $stmt->execute([strtoupper($symbol)]);
-        return $stmt->fetch(\PDO::FETCH_ASSOC);
-    }
-}
-
-class AgentManager {
-    private $db;
-    private $api;
-    private $rl;
-    
-    public function __construct($db, $api, $rl) {
-        $this->db = $db;
-        $this->api = $api;
-        $this->rl = $rl;
-    }
-    
-    public function createAgent($data) {
-        $db = $this->db->getConnection('main');
-        $stmt = $db->prepare("INSERT INTO agents 
-            (name, strategy_prompt, strategy_type, capital_brics, timeframe, generation, parent_ids, created_at, last_action_at) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        
-        $name = isset($data['name']) ? $data['name'] : 'AI Trader ' . rand(1000, 9999);
-        $strategy = isset($data['strategy_prompt']) ? $data['strategy_prompt'] : 'Trading based on technical analysis.';
-        $type = isset($data['strategy_type']) ? $data['strategy_type'] : 'custom';
-        $timeframe = isset($data['timeframe']) ? $data['timeframe'] : 'short';
-        $capital = isset($data['capital_brics']) ? $data['capital_brics'] : AGENT_INITIAL_CAPITAL;
-        $gen = isset($data['generation']) ? $data['generation'] : 1;
-        $parents = isset($data['parent_ids']) ? json_encode($data['parent_ids']) : '[]';
-        
-        $stmt->execute([$name, $strategy, $type, $capital, $timeframe, $gen, $parents, time(), time()]);
-        $agentId = $db->lastInsertId();
-        
-        $this->db->logConsole('agent_created', "Nouvel agent: $name", ['id' => $agentId, 'strategy' => $type]);
-        
-        return $agentId;
-    }
-    
-    public function getActiveAgents() {
-        $db = $this->db->getConnection('main');
-        $stmt = $db->query("SELECT * FROM agents WHERE status='active' ORDER BY reinforcement_score DESC");
-        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    }
-    
-    public function getAgent($id) {
-        $db = $this->db->getConnection('main');
-        $stmt = $db->prepare("SELECT * FROM agents WHERE id = ?");
-        $stmt->execute([$id]);
-        return $stmt->fetch(\PDO::FETCH_ASSOC);
-    }
-    
-    public function executeTrade($agentId, $decision) {
-        $db = $this->db->getConnection('main');
-        $agent = $this->getAgent($agentId);
-        if (!$agent) return false;
-        
-        $coin = $this->db->getMarket()->getCoin($decision['coin']);
-        if (!$coin) return false;
-        
-        $action = strtolower($decision['action']);
-        $amount = isset($decision['amount_brics']) ? min($decision['amount_brics'], $agent['capital_brics'] * 0.5) : 1000;
-        
-        if ($action === 'buy') {
-            $quantity = $amount / $coin['current_price'];
-            $stmt = $db->prepare("INSERT INTO agent_trades 
-                (agent_id, coin_symbol, action, price, quantity, value_brics, reasoning, timeframe, executed_at) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([
-                $agentId, strtoupper($decision['coin']), 'buy', $coin['current_price'], 
-                $quantity, $amount, isset($decision['reasoning']) ? $decision['reasoning'] : '', 
-                isset($decision['timeframe']) ? $decision['timeframe'] : 'short', time()
-            ]);
-            
-            // Create/update position
-            $existingPos = $db->prepare("SELECT * FROM open_positions WHERE agent_id = ? AND coin_symbol = ?");
-            $existingPos->execute([$agentId, strtoupper($decision['coin'])]);
-            $pos = $existingPos->fetch(\PDO::FETCH_ASSOC);
-            
-            if ($pos) {
-                $newQty = $pos['quantity'] + $quantity;
-                $newAvg = (($pos['avg_buy_price'] * $pos['quantity']) + ($coin['current_price'] * $quantity)) / $newQty;
-                $newInvested = $pos['total_invested'] + $amount;
-                $updateStmt = $db->prepare("UPDATE open_positions SET quantity = ?, avg_buy_price = ?, total_invested = ? WHERE id = ?");
-                $updateStmt->execute([$newQty, $newAvg, $newInvested, $pos['id']]);
-            } else {
-                $insStmt = $db->prepare("INSERT INTO open_positions 
-                    (agent_id, coin_symbol, coin_id, quantity, avg_buy_price, total_invested, opened_at) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?)");
-                $insStmt->execute([$agentId, strtoupper($decision['coin']), $coin['id'], $quantity, $coin['current_price'], $amount, time()]);
-            }
-            
-            // Update agent capital
-            $updAgent = $db->prepare("UPDATE agents SET capital_brics = capital_brics - ?, last_trade_at = ? WHERE id = ?");
-            $updAgent->execute([$amount, time(), $agentId]);
-            
-            $this->db->logConsole('trade_buy', "Achat: $amount BRICS de " . $decision['coin'], ['agent' => $agent['name'], 'price' => $coin['current_price']]);
-            
-        } elseif ($action === 'sell') {
-            $posStmt = $db->prepare("SELECT * FROM open_positions WHERE agent_id = ? AND coin_symbol = ?");
-            $posStmt->execute([$agentId, strtoupper($decision['coin'])]);
-            $pos = $posStmt->fetch(\PDO::FETCH_ASSOC);
-            
-            if ($pos) {
-                $sellValue = $pos['quantity'] * $coin['current_price'];
-                $pnl = $sellValue - $pos['total_invested'];
-                $pnlPercent = ($pnl / $pos['total_invested']) * 100;
-                
-                $stmt = $db->prepare("INSERT INTO agent_trades 
-                    (agent_id, coin_symbol, action, price, quantity, value_brics, pnl, pnl_percent, reasoning, timeframe, executed_at) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $stmt->execute([
-                    $agentId, strtoupper($decision['coin']), 'sell', $coin['current_price'],
-                    $pos['quantity'], $sellValue, $pnl, $pnlPercent,
-                    isset($decision['reasoning']) ? $decision['reasoning'] : 'Sell signal',
-                    isset($decision['timeframe']) ? $decision['timeframe'] : 'short', time()
-                ]);
-                
-                // Delete position
-                $delStmt = $db->prepare("DELETE FROM open_positions WHERE id = ?");
-                $delStmt->execute([$pos['id']]);
-                
-                // Update agent capital and stats
-                $newCapital = $agent['capital_brics'] + $sellValue;
-                $newPnl = $agent['total_pnl'] + $pnl;
-                $newTrades = $agent['total_trades'] + 1;
-                $wins = $pnl > 0 ? 1 : 0;
-                
-                $updAgent = $db->prepare("UPDATE agents SET capital_brics = ?, total_pnl = ?, total_trades = ?, last_trade_at = ? WHERE id = ?");
-                $updAgent->execute([$newCapital, $newPnl, $newTrades, time(), $agentId]);
-                
-                // Store RL memory
-                $this->rl->store(
-                    ['coin' => $decision['coin'], 'action' => 'sell', 'entry' => $pos['avg_buy_price']],
-                    'sell',
-                    $pnl,
-                    'trade_' . $agentId . '_' . time()
-                );
-                
-                $this->db->logConsole('trade_sell', "Vente: " . $decision['coin'] . " PnL: " . round($pnl, 2) . " BRICS", ['agent' => $agent['name'], 'pnl' => $pnl]);
-            }
-        }
-        
-        // Update last action
-        $updAction = $db->prepare("UPDATE agents SET last_action_at = ? WHERE id = ?");
-        $updAction->execute([time(), $agentId]);
-        
-        return true;
-    }
-    
-    public function archiveAgent($agentId, $reason) {
-        $db = $this->db->getConnection('main');
-        $agent = $this->getAgent($agentId);
-        if (!$agent) return false;
-        
-        $stmt = $db->prepare("INSERT INTO agents_archive 
-            (original_agent_id, name, strategy_prompt, final_pnl_percent, total_trades, win_rate, reason_archived, archived_at) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-        
-        $pnlPercent = $agent['total_pnl_percent'];
-        $stmt->execute([
-            $agentId, $agent['name'], $agent['strategy_prompt'],
-            $pnlPercent, $agent['total_trades'], $agent['win_rate'],
-            $reason, time()
-        ]);
-        
-        $db->exec("UPDATE agents SET status='archived' WHERE id = $agentId");
-        $this->db->logConsole('agent_archived', "Agent archivé: " . $agent['name'], ['reason' => $reason]);
-        
-        return true;
-    }
-    
-    public function getActiveCount() {
-        $db = $this->db->getConnection('main');
-        return (int)$db->query("SELECT COUNT(*) FROM agents WHERE status='active'")->fetchColumn();
-    }
-}
-
-class Brain {
-    private $db;
-    private $agentManager;
-    private $rl;
-    
-    public function __construct($db, $agentManager, $rl) {
-        $this->db = $db;
-        $this->agentManager = $agentManager;
-        $this->rl = $rl;
-    }
-    
-    public function runCycle() {
-        $result = ['created' => 0, 'archived' => 0, 'actions' => []];
-        
-        // Get market state
-        $coins = $this->db->getMarket()->getCoins(50);
-        $agents = $this->agentManager->getActiveAgents();
-        $stats = $this->db->getStats();
-        
-        // Build context for AI
-        $marketContext = "Marché crypto actuel:\n";
-        foreach (array_slice($coins, 0, 10) as $c) {
-            $marketContext .= "- {$c['symbol']}: \${$c['current_price']} (" . round($c['price_change_pct_24h'], 2) . "%)\n";
-        }
-        
-        $agentsContext = "\nAgents actifs: " . count($agents) . "\n";
-        foreach (array_slice($agents, 0, 5) as $a) {
-            $agentsContext .= "- {$a['name']}: Capital: " . round($a['capital_brics'], 2) . ", PnL: " . round($a['total_pnl'], 2) . "\n";
-        }
-        
-        $prompt = "Tu es le cerveau central d'un système de trading crypto avec 1,000,000 BRICS.
-$marketContext
-$agentsContext
-
-Statistiques: Capital total: {$stats['total_capital']} BRICS, Trades: {$stats['total_trades']}, Win Rate: {$stats['win_rate']}%
-
-Tâches:
-1. Analyser les tendances du marché
-2. Décider si créer de nouveaux agents ou en archiver
-3. Donner des recommandations de trading
-
-Réponds en JSON:
-{
-  \"analysis\": \"ton analyse\",
-  \"create_agents\": [{\"name\": \"...\", \"strategy_prompt\": \"...\", \"strategy_type\": \"momentum|mean_reversion|breakout\", \"timeframe\": \"short|medium|long\"}],
-  \"archive_agents\": [agent_ids],
-  \"trading_signal\": {\"action\": \"buy|sell|hold\", \"coin\": \"BTC\", \"reasoning\": \"...\", \"confidence\": 75}
-}";
-        
-        $messages = [['role' => 'user', 'content' => $prompt]];
-        $response = $this->db->getApiRotation()->call($messages, 'mistral-small-2506', 2500, 0.7);
-        
-        // Parse response
-        $decision = $this->parseJsonResponse($response);
-        
-        // Create agents if none exist or if AI suggests it
-        $activeCount = $this->agentManager->getActiveCount();
-        if ($activeCount === 0 || (isset($decision['create_agents']) && is_array($decision['create_agents']))) {
-            $agentsToCreate = [];
-            
-            // If no agents, create initial batch
-            if ($activeCount === 0) {
-                $initialStrategies = [
-                    ['name' => 'Momentum Alpha', 'strategy_prompt' => 'Trade les cryptos avec forte momentum positive sur 24h', 'strategy_type' => 'momentum'],
-                    ['name' => 'Dip Buyer Pro', 'strategy_prompt' => 'Achète les dips sur supports clés, vend sur résistances', 'strategy_type' => 'mean_reversion'],
-                    ['name' => 'Breakout Hunter', 'strategy_prompt' => 'Détecte et trade les breakouts de consolidation', 'strategy_type' => 'breakout'],
-                    ['name' => 'Scalper X', 'strategy_prompt' => 'Trading rapide sur petites fluctuations 1-5%', 'strategy_type' => 'scalping'],
-                    ['name' => 'Trend Master', 'strategy_prompt' => 'Suit la tendance majeure sur 7 jours', 'strategy_type' => 'trend_following']
-                ];
-                $agentsToCreate = array_slice($initialStrategies, 0, 3);
-            } else {
-                // Use AI suggestions
-                $agentsToCreate = $decision['create_agents'];
-            }
-            
-            foreach ($agentsToCreate as $agentData) {
-                if ($this->agentManager->getActiveCount() < TARGET_AGENTS) {
-                    $this->agentManager->createAgent($agentData);
-                    $result['created']++;
-                }
-            }
-        }
-        
-        // Archive underperforming agents
-        foreach ($agents as $agent) {
-            if ($agent['total_pnl'] < -5000 && $agent['total_trades'] > 5) {
-                $this->agentManager->archiveAgent($agent['id'], 'Poor performance');
-                $result['archived']++;
-            }
-        }
-        
-        // Execute trades for all active agents
-        $freshAgents = $this->agentManager->getActiveAgents();
-        foreach ($freshAgents as $agent) {
-            if ((time() - $agent['last_trade_at']) > TRADE_INTERVAL_SECONDS || $agent['last_trade_at'] == 0) {
-                $agentPrompt = "Tu es {$agent['name']}. Stratégie: {$agent['strategy_prompt']}.
-Timeframe: {$agent['timeframe']}. Capital disponible: " . round($agent['capital_brics'], 2) . " BRICS.
-$marketContext
-
-Décide d'une action de trading. Réponds en JSON:
-{\"action\": \"buy|sell|hold\", \"coin\": \"BTC\", \"amount_brics\": 1000, \"reasoning\": \"...\", \"confidence\": 80, \"timeframe\": \"short\"}";
-                
-                $agentMessages = [['role' => 'user', 'content' => $agentPrompt]];
-                $agentResponse = $this->db->getApiRotation()->call($agentMessages, 'ministral-8b-2512', 1500, 0.8);
-                $agentDecision = $this->parseJsonResponse($agentResponse);
-                
-                if (isset($agentDecision['action']) && isset($agentDecision['coin'])) {
-                    $conf = isset($agentDecision['confidence']) ? (int)$agentDecision['confidence'] : 50;
-                    if ($conf >= MIN_CONFIDENCE_TRADE) {
-                        $this->agentManager->executeTrade($agent['id'], $agentDecision);
-                        $result['actions'][] = "{$agent['name']} {$agentDecision['action']} {$agentDecision['coin']}";
-                    }
-                }
-            }
-        }
-        
-        // Log brain cycle
-        $this->db->logConsole('brain_cycle', 'Cycle cerveau terminé', $result);
-        
-        return $result;
-    }
-    
-    private function parseJsonResponse($text) {
-        if (!$text) return [];
-        
-        // Try to find JSON in response
-        preg_match('/\{.*\}/s', $text, $matches);
-        if (isset($matches[0])) {
-            $result = json_decode($matches[0], true);
-            if ($result) return $result;
-        }
-        
-        return json_decode($text, true) ?: [];
     }
 }
