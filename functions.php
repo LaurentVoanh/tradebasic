@@ -13,7 +13,10 @@
  */
 
 error_reporting(E_ALL);
+// Sur Hostinger, on désactive l'affichage des erreurs en production pour éviter HTTP 500
+// Les erreurs sont journalisées dans les logs du serveur
 ini_set('display_errors', 0);
+ini_set('log_errors', 1);
 set_time_limit(600);
 
 // ============================================================
@@ -1003,6 +1006,73 @@ function getSystemStatus(): array {
         'total_brics'      => INITIAL_CAPITAL,
         'trade_interval'   => TRADE_INTERVAL_SECONDS,
     ];
+}
+
+// ============================================================
+// SYSTEM STATS (pour index.php et api.php)
+// ============================================================
+function getSystemStats(): array {
+    try {
+        initDatabases();
+        $db = getDB('main');
+        
+        // Vérifier si les tables existent
+        $tables = $db->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(PDO::FETCH_COLUMN);
+        
+        if (!in_array('system_config', $tables)) {
+            return [
+                'total_capital'   => INITIAL_CAPITAL,
+                'pool_capital'    => INITIAL_CAPITAL,
+                'agents_capital'  => 0,
+                'total_pnl'       => 0,
+                'agents_count'    => 0,
+                'total_trades'    => 0,
+                'win_rate'        => 0
+            ];
+        }
+        
+        // Capital total initial
+        $totalCapital = INITIAL_CAPITAL;
+        
+        // Capital chez les agents actifs
+        $agentsCapital = (float)$db->query("SELECT COALESCE(SUM(capital_brics), 0) FROM agents WHERE status='active'")->fetchColumn();
+        
+        // Capital disponible (pool)
+        $poolCapital = $totalCapital - $agentsCapital;
+        
+        // Profit total (somme des PnL des agents)
+        $totalPnl = (float)$db->query("SELECT COALESCE(SUM(total_pnl), 0) FROM agents")->fetchColumn();
+        
+        // Nombre d'agents actifs
+        $agentsCount = (int)$db->query("SELECT COUNT(*) FROM agents WHERE status='active'")->fetchColumn();
+        
+        // Total des trades
+        $totalTrades = (int)$db->query("SELECT COALESCE(SUM(total_trades), 0) FROM agents")->fetchColumn();
+        
+        // Win rate moyen
+        $avgWinRate = (float)$db->query("SELECT COALESCE(AVG(win_rate), 0) FROM agents WHERE total_trades > 0")->fetchColumn();
+        
+        return [
+            'total_capital'   => $totalCapital,
+            'pool_capital'    => $poolCapital,
+            'agents_capital'  => $agentsCapital,
+            'total_pnl'       => $totalPnl,
+            'agents_count'    => $agentsCount,
+            'total_trades'    => $totalTrades,
+            'win_rate'        => $avgWinRate
+        ];
+    } catch (Throwable $e) {
+        // Retourner des valeurs par défaut en cas d'erreur
+        return [
+            'total_capital'   => INITIAL_CAPITAL,
+            'pool_capital'    => INITIAL_CAPITAL,
+            'agents_capital'  => 0,
+            'total_pnl'       => 0,
+            'agents_count'    => 0,
+            'total_trades'    => 0,
+            'win_rate'        => 0
+        ];
+    }
 }
 
 // ============================================================

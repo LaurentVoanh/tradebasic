@@ -1,13 +1,35 @@
 <?php
 session_start();
 require_once __DIR__ . '/functions.php';
+
+// Initialiser les bases de données et afficher les erreurs pour le débogage
 try {
     initDatabases();
     initDefaultAgents();
     $lastUpdate = (int)(getDB()->query("SELECT value FROM system_config WHERE key='last_market_update'")->fetchColumn() ?: 0);
-    if ((time() - $lastUpdate) > 60) updateMarketData();
-} catch (Throwable $e) {}
-$stats = getSystemStats();
+    if ((time() - $lastUpdate) > 60) {
+        updateMarketData();
+    }
+} catch (Throwable $e) {
+    // En production, on loggue l'erreur mais on continue
+    error_log("Erreur d'initialisation: " . $e->getMessage());
+}
+
+// Récupérer les statistiques du système
+try {
+    $stats = getSystemStats();
+} catch (Throwable $e) {
+    // Valeurs par défaut en cas d'erreur
+    $stats = [
+        'total_capital'   => INITIAL_CAPITAL,
+        'pool_capital'    => INITIAL_CAPITAL,
+        'agents_capital'  => 0,
+        'total_pnl'       => 0,
+        'agents_count'    => 0,
+        'total_trades'    => 0,
+        'win_rate'        => 0
+    ];
+}
 ?>
 <!DOCTYPE html>
 <html lang="fr">
