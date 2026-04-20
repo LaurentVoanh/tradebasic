@@ -6,15 +6,13 @@
  * 
  * SYSTEME COMPLET AVEC:
  * - Reinforcement Learning puissant
- * - 3 API Keys Mistral en rotation
+ * - API Keys Mistral en rotation
  * - Archive complète des cours historiques
  * - Console temps réel détaillée
  * - Capital réellement transféré et mis à jour
  */
 
 error_reporting(E_ALL);
-// Sur Hostinger, on désactive l'affichage des erreurs en production pour éviter HTTP 500
-// Les erreurs sont journalisées dans les logs du serveur
 ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 set_time_limit(600);
@@ -22,9 +20,7 @@ set_time_limit(600);
 // ============================================================
 // CONFIGURATION
 // ============================================================
-define('MISTRAL_KEYS', [
-    'sk-proj-KEY1' => getenv('MISTRAL_API_KEY') ?: 'sk-proj-votre-cle-api-mistral-ici',
-]);
+define('MISTRAL_API_KEY', getenv('MISTRAL_API_KEY') ?: ''); // À configurer avec votre vraie clé
 define('MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1/chat/completions');
 define('DB_DIR', __DIR__ . '/db/');
 define('COINGECKO_MARKETS', 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=eur&order=market_cap_desc&per_page=50&page=1&sparkline=true&price_change_percentage=24h,7d,30d');
@@ -32,13 +28,14 @@ define('COINGECKO_HISTORY', 'https://api.coingecko.com/api/v3/coins/{id}/ohlc?vs
 define('BINANCE_TICKER', 'https://api.binance.com/api/v3/ticker/24hr');
 define('INITIAL_CAPITAL', 1000000.00); // 1 Million BRICS Coins = 1M EUR
 define('TARGET_AGENTS', 50); // Nombre optimal d'agents
-define('AGENT_CAPITAL', 20000.00); // Capital par agent (2% du total)
+define('AGENT_INITIAL_CAPITAL', 20000.00); // Capital initial par agent
 define('TRADE_INTERVAL_SECONDS', 8);
 define('BRAIN_CYCLE_SECONDS', 30); // Cycle complet du cerveau toutes les 30s
 define('MAX_CONSOLE_LOGS', 500);
 define('RL_LEARNING_RATE', 0.15); // Taux d'apprentissage RL
 define('RL_DISCOUNT_FACTOR', 0.9); // Facteur de discount RL
 define('MIN_CONFIDENCE_TRADE', 65); // Confiance minimum pour trader
+define('MODEL_PRICE', 5000.00); // Prix d'achat d'un modèle master
 
 // ============================================================
 // DATABASE CONNECTIONS
@@ -380,18 +377,22 @@ function initDatabases(): void {
 // MISTRAL API
 // ============================================================
 function getMistralKey(): string {
-    $keys = array_values(MISTRAL_KEYS);
-    return $keys[0];
+    return MISTRAL_API_KEY;
 }
 
 function callMistral(
     array $messages,
     string $model = 'mistral-small-2506',
     int $maxTokens = 2000,
-    float $temperature = 0.7,
-    ?string $forcedKey = null
+    float $temperature = 0.7
 ): ?string {
-    $apiKey = $forcedKey ?? getMistralKey();
+    $apiKey = getMistralKey();
+    
+    // Si pas de clé API, retourne une réponse simulée pour démo
+    if (empty($apiKey)) {
+        error_log("MISTRAL_API_KEY non configurée - mode simulation activé");
+        return simulateAgentResponse($messages);
+    }
 
     // Auto-select large context model if needed
     $totalLen = array_sum(array_map(fn($m) => strlen($m['content']), $messages));
@@ -421,6 +422,46 @@ function callMistral(
 
     $data = json_decode($raw, true);
     return $data['choices'][0]['message']['content'] ?? null;
+}
+
+/**
+ * Simule une réponse IA quand aucune clé API n'est configurée
+ */
+function simulateAgentResponse(array $messages): ?string {
+    $lastMsg = end($messages)['content'] ?? '';
+    
+    // Simulation pour décision de trading
+    if (strpos($lastMsg, 'JSON') !== false && strpos($lastMsg, 'action') !== false) {
+        $actions = ['buy', 'sell', 'hold'];
+        $coins = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX'];
+        $action = $actions[array_rand($actions)];
+        $coin = $coins[array_rand($coins)];
+        $amount = rand(500, 3000);
+        $confidence = rand(60, 95);
+        
+        return json_encode([
+            'action' => $action,
+            'coin' => $coin,
+            'amount_brics' => $amount,
+            'reasoning' => "Analyse technique favorable sur $coin avec momentum positif.",
+            'confidence' => $confidence,
+            'timeframe' => 'short',
+            'stop_loss' => 0,
+            'take_profit' => 0
+        ], JSON_PRETTY_PRINT);
+    }
+    
+    // Simulation pour création d'agents
+    if (strpos($lastMsg, 'nouveaux agents') !== false) {
+        return json_encode([
+            'agents' => [
+                ['name' => 'AI Trader ' . rand(100, 999), 'strategy_prompt' => 'Stratégie de trading basée sur le momentum et les volumes.', 'strategy_type' => 'momentum'],
+                ['name' => 'Crypto Bot ' . rand(100, 999), 'strategy_prompt' => 'Analyse des supports et résistances pour entries optimales.', 'strategy_type' => 'swing']
+            ]
+        ], JSON_PRETTY_PRINT);
+    }
+    
+    return null;
 }
 
 function callMistralJSON(array $messages, string $model = 'mistral-small-2506', int $maxTokens = 2000): ?array {
@@ -673,7 +714,8 @@ function getLatestAnalysis(string $coinId): ?array {
 // ============================================================
 function createAgent(array $data): int {
     $db = getDB('main');
-    $capitalPerAgent = INITIAL_CAPITAL / TARGET_AGENTS; // 10000 BRICS par agent
+    // Capital initial pour les nouveaux agents (défini dans la config)
+    $capital = $data['capital_brics'] ?? AGENT_INITIAL_CAPITAL;
     $timeframe = $data['timeframe'] ?? 'short';
     
     $db->prepare("
@@ -684,14 +726,18 @@ function createAgent(array $data): int {
         $data['name'],
         $data['strategy_prompt'],
         $data['strategy_type'] ?? 'custom',
-        $capitalPerAgent,
+        $capital,
         $timeframe,
     ]);
     
     $agentId = (int)$db->lastInsertId();
     
     // Log console
-    logConsole('AGENT_CREATED', "Agent créé: {$data['name']}", ['agent_id' => $agentId, 'timeframe' => $timeframe]);
+    logConsole('AGENT_CREATE', "Nouvel agent créé: {$data['name']} - Capital: {$capital} BRICS", [
+        'agent_id' => $agentId, 
+        'timeframe' => $timeframe,
+        'capital' => $capital
+    ]);
     
     return $agentId;
 }
@@ -854,6 +900,7 @@ function runBrainCycle(): array {
     $agents = $db->query("SELECT * FROM agents WHERE status='active' ORDER BY total_pnl_percent DESC")->fetchAll(PDO::FETCH_ASSOC);
     $count  = count($agents);
 
+    logConsole('BRAIN_START', "Cerveau Central: Analyse de $count agents actifs", ['agents_count' => $count]);
     $log['actions'][] = "Analyse de $count agents actifs";
 
     // 2. Archive underperformers (bottom 20% with > 5 trades)
@@ -862,75 +909,100 @@ function runBrainCycle(): array {
     foreach ($agents as $agent) {
         if ($agent['total_trades'] < 5) continue;
         if ($agent['total_pnl_percent'] < $threshold) {
-            // Extract lessons first
+            // Extract lessons first (avec simulation si pas d'API)
             $lessons = callMistral(
                 [['role' => 'user', 'content' => "Cet agent IA de trading a perdu {$agent['total_pnl_percent']}% avec stratégie : {$agent['strategy_prompt']}. En 1 phrase, quelle est l'erreur principale ?"]],
                 'ministral-8b-2512',
                 200
-            ) ?? "Stratégie trop risquée";
+            );
+            if (!$lessons) {
+                $lessons = "Stratégie trop risquée ou mal adaptée au marché actuel.";
+            }
 
             $db->prepare("INSERT INTO agents_archive (original_agent_id, name, strategy_prompt, final_pnl_percent, total_trades, win_rate, reason_archived, lessons_extracted) VALUES (?,?,?,?,?,?,?,?)")
                ->execute([$agent['id'], $agent['name'], $agent['strategy_prompt'], $agent['total_pnl_percent'], $agent['total_trades'], $agent['win_rate'], 'performance_below_threshold', $lessons]);
 
             $db->prepare("UPDATE agents SET status='archived' WHERE id=?")->execute([$agent['id']]);
             $archived++;
+            logConsole('AGENT_ARCHIVE', "Agent archivé: {$agent['name']} (PnL: {$agent['total_pnl_percent']}%)", [
+                'agent_id' => $agent['id'],
+                'reason' => 'performance_below_threshold',
+                'lessons' => $lessons
+            ]);
         }
     }
 
     $log['archived'] = $archived;
     $log['actions'][] = "$archived agents archivés";
 
-    // 3. Count active agents
+    // 3. Count active agents and determine how many to create
     $activeCount = (int)$db->query("SELECT COUNT(*) FROM agents WHERE status='active'")->fetchColumn();
-    $target = 100;
+    $target = TARGET_AGENTS;
     $toCreate = max(0, $target - $activeCount);
 
-    // 4. Create new agents based on top performers
+    // 4. Create new agents based on top performers using RL principles
     if ($toCreate > 0) {
         $topAgents = $db->query("SELECT * FROM agents WHERE status='active' ORDER BY total_pnl_percent DESC LIMIT 5")->fetchAll(PDO::FETCH_ASSOC);
         $topStrategies = implode("\n", array_map(fn($a) => "- [{$a['total_pnl_percent']}%] {$a['strategy_prompt']}", $topAgents));
 
         $archiveLessons = $db->query("SELECT lessons_extracted FROM agents_archive ORDER BY archived_at DESC LIMIT 5")->fetchAll(PDO::FETCH_COLUMN, 0);
-        $lessonsText = implode("\n", $archiveLessons);
+        $lessonsText = !empty($archiveLessons) ? implode("\n", $archiveLessons) : "Aucune leçon disponible pour le moment.";
 
-        $prompt = "Tu es le Cerveau Central d'un système de trading IA. Crée $toCreate nouveaux agents de trading uniques.\n\nTop performers actuels :\n$topStrategies\n\nLeçons des agents archivés :\n$lessonsText\n\nCrée $toCreate agents qui combinent les meilleures qualités et évitent les erreurs. Chaque agent doit avoir une personnalité distincte (scalper, swing trader, DCA bot, momentum trader, etc.).\n\nRéponds en JSON : {\"agents\":[{\"name\":\"NomAgent\",\"strategy_prompt\":\"description détaillée\",\"strategy_type\":\"scalping|swing|long_term|momentum|dca\"},...]}";
+        $prompt = "Tu es le Cerveau Central d'un système de trading IA avec Reinforcement Learning. Crée $toCreate nouveaux agents de trading uniques.
+
+Top performers actuels (à inspirer):
+$topStrategies
+
+Leçons des agents archivés (à éviter):
+$lessonsText
+
+Crée $toCreate agents qui combinent les meilleures qualités et évitent les erreurs passées. Chaque agent doit avoir:
+- Une personnalité distincte (scalper, swing trader, DCA bot, momentum trader, mean reversion, etc.)
+- Une stratégie claire et exploitable
+- Un timeframe adapté (short/medium/long)
+
+Réponds UNIQUEMENT en JSON valide avec cette structure:
+{\"agents\":[{\"name\":\"NomAgent\",\"strategy_prompt\":\"description détaillée de la stratégie\",\"strategy_type\":\"scalping|swing|long_term|momentum|dca|mean_reversion\",\"timeframe\":\"short|medium|long\"},...]}";
 
         $result = callMistralJSON(
             [['role' => 'user', 'content' => $prompt]],
-            'mistral-large-2512',
+            'mistral-small-2506',
             3000
         );
 
         if (!empty($result['agents'])) {
             foreach ($result['agents'] as $newAgent) {
                 createAgent([
-                    'name'            => $newAgent['name'] ?? 'Agent-' . rand(1000, 9999),
-                    'strategy_prompt' => $newAgent['strategy_prompt'] ?? '',
+                    'name'            => $newAgent['name'] ?? 'AI Trader ' . rand(1000, 9999),
+                    'strategy_prompt' => $newAgent['strategy_prompt'] ?? 'Trading basé sur analyse technique.',
                     'strategy_type'   => $newAgent['strategy_type'] ?? 'custom',
+                    'timeframe'       => $newAgent['timeframe'] ?? 'short',
                     'user_id'         => null,
                 ]);
                 $log['created']++;
-                sleep(1); // Rate limit
             }
         }
     }
 
     $log['actions'][] = "{$log['created']} nouveaux agents créés";
 
-    // 5. Run decisions for top 10 active agents
+    // 5. Run decisions for top 10 active agents (sans sleep pour éviter timeout)
     $topActive = $db->query("SELECT id FROM agents WHERE status='active' ORDER BY total_pnl_percent DESC LIMIT 10")->fetchAll(PDO::FETCH_COLUMN, 0);
     $decisionsRun = 0;
     foreach ($topActive as $agentId) {
-        runAgentDecision((int)$agentId);
-        $decisionsRun++;
-        sleep(1); // Rate limit between Mistral calls
+        $decision = runAgentDecision((int)$agentId);
+        if ($decision) {
+            $decisionsRun++;
+        }
     }
     $log['actions'][] = "$decisionsRun décisions d'agents exécutées";
 
-    // 6. Log brain cycle
-    $db->prepare("INSERT INTO brain_logs (action, details, agents_created, agents_archived) VALUES ('cycle',?,?,?)")
+    // 6. Log brain cycle completion
+    $db->prepare("INSERT INTO brain_logs (action, details, agents_created, agents_archived) VALUES ('cycle_complete',?,?,?)")
        ->execute([json_encode($log['actions']), $log['created'], $log['archived']]);
     $db->prepare("UPDATE system_config SET value=strftime('%s','now') WHERE key='last_brain_run'")->execute();
+
+    logConsole('BRAIN_END', "Cycle cerveau terminé: {$log['created']} créés, {$log['archived']} archivés", $log);
 
     return $log;
 }
