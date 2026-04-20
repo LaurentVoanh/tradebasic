@@ -1,1 +1,1 @@
-(empty)
+Nothing needs to be added to .gitignore since the changes only include PHP source files (.php) which are legitimate code files that should be tracked in version control.
