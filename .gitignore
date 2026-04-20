@@ -1,1 +1,1 @@
-Nothing should be ignored since only source files (functions.php, index.php) were modified and no build artifacts, dependencies, or temporary files are present in the changes.
+Nothing should be ignored based on the provided file changes. The modified files (`functions.php`, `index.php`) are source code files that should not be added to `.gitignore`.
