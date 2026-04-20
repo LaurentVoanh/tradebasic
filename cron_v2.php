@@ -8,9 +8,9 @@ require_once __DIR__ . '/src/Core.php';
 
 use IACrypto\Core\Engine;
 
-// Empêcher exécution simultanée
+// Empêcher exécution simultanée - lock de 8s pour permettre trades fréquents
 $lockFile = __DIR__ . '/cache/cron.lock';
-if (file_exists($lockFile) && (time() - filemtime($lockFile)) < 30) {
+if (file_exists($lockFile) && (time() - filemtime($lockFile)) < TRADE_INTERVAL_SECONDS) {
     die("Déjà en cours d'exécution\n");
 }
 file_put_contents($lockFile, time());

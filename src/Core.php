@@ -562,6 +562,21 @@ class Database {
                 episode_id TEXT,
                 created_at INTEGER DEFAULT (strftime('%s','now'))
             )",
+            "CREATE TABLE IF NOT EXISTS open_positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id INTEGER NOT NULL,
+                coin_symbol TEXT NOT NULL,
+                coin_id TEXT,
+                quantity REAL NOT NULL,
+                avg_buy_price REAL NOT NULL,
+                total_invested REAL NOT NULL,
+                current_value REAL DEFAULT 0,
+                unrealized_pnl REAL DEFAULT 0,
+                opened_at INTEGER DEFAULT (strftime('%s','now')),
+                FOREIGN KEY (agent_id) REFERENCES agents(id)
+            )",
+            "CREATE INDEX IF NOT EXISTS idx_positions_agent ON open_positions(agent_id)",
+            "CREATE INDEX IF NOT EXISTS idx_positions_symbol ON open_positions(coin_symbol)",
         ];
         
         foreach ($tables as $sql) {
@@ -578,24 +593,40 @@ class Database {
     public function getStats(): array {
         $db = $this->getConnection('main');
         
-        $totalCapital = (float)$db->query("SELECT value FROM system_config WHERE key='total_brics_capital'")->fetchColumn() ?: INITIAL_CAPITAL;
-        $agentsCapital = (float)$db->query("SELECT SUM(capital_brics) FROM agents WHERE status='active'")->fetchColumn() ?: 0;
-        $poolCapital = $totalCapital - $agentsCapital;
-        $totalPnl = (float)$db->query("SELECT SUM(total_pnl) FROM agents")->fetchColumn() ?: 0;
+        // Capital total initial : 1 000 000 BRICS
+        $totalCapital = INITIAL_CAPITAL;
+        
+        // Capital chez les agents (capital non investi)
+        $agentsCapital = (float)$db->query("SELECT COALESCE(SUM(capital_brics), 0) FROM agents WHERE status='active'")->fetchColumn();
+        
+        // Valeur totale des positions ouvertes (capital investi)
+        $investedCapital = (float)$db->query("SELECT COALESCE(SUM(current_value), 0) FROM open_positions")->fetchColumn();
+        
+        // PnL total réalisé (trades fermés)
+        $realizedPnl = (float)$db->query("SELECT COALESCE(SUM(pnl), 0) FROM agent_trades WHERE action='sell'")->fetchColumn();
+        
+        // PnL non réalisé (positions ouvertes)
+        $unrealizedPnl = (float)$db->query("SELECT COALESCE(SUM(unrealized_pnl), 0) FROM open_positions")->fetchColumn();
+        
+        // Capital total actuel = capital agents + positions + pnl réalisé
+        $currentTotalCapital = $agentsCapital + $investedCapital + $realizedPnl;
+        
         $agentsCount = (int)$db->query("SELECT COUNT(*) FROM agents WHERE status='active'")->fetchColumn();
         $totalTrades = (int)$db->query("SELECT COUNT(*) FROM agent_trades")->fetchColumn();
-        
-        $winningAgents = (int)$db->query("SELECT COUNT(*) FROM agents WHERE total_pnl > 0 AND status='active'")->fetchColumn();
-        $winRate = $totalTrades > 0 ? ($winningAgents / max(1, $agentsCount)) * 100 : 0;
+        $winningTrades = (int)$db->query("SELECT COUNT(*) FROM agent_trades WHERE action='sell' AND pnl > 0")->fetchColumn();
+        $winRate = $totalTrades > 0 ? ($winningTrades / $totalTrades) * 100 : 0;
         
         return [
-            'total_capital' => $totalCapital,
-            'pool_capital' => $poolCapital,
-            'agents_capital' => $agentsCapital,
-            'total_pnl' => $totalPnl,
+            'total_capital' => round($currentTotalCapital, 2),
+            'pool_capital' => round($agentsCapital, 2),
+            'agents_capital' => round($agentsCapital, 2),
+            'invested_capital' => round($investedCapital, 2),
+            'realized_pnl' => round($realizedPnl, 2),
+            'unrealized_pnl' => round($unrealizedPnl, 2),
+            'total_pnl' => round($realizedPnl + $unrealizedPnl, 2),
             'agents_count' => $agentsCount,
             'total_trades' => $totalTrades,
-            'win_rate' => $winRate
+            'win_rate' => round($winRate, 2)
         ];
     }
 }
@@ -804,9 +835,9 @@ class AgentManager {
             return null;
         }
         
-        // Vérifier cooldown entre trades
-        $lastTrade = (int)$agentData['last_trade_at'];
-        if (time() - $lastTrade < TRADE_INTERVAL_SECONDS * 2) {
+        // Vérifier cooldown entre trades - utiliser last_trade_at pour le vrai cooldown
+        $lastTrade = (int)($agentData['last_trade_at'] ?? 0);
+        if (time() - $lastTrade < TRADE_INTERVAL_SECONDS) {
             return null;
         }
         
@@ -959,14 +990,66 @@ PROMPT;
         $agent->execute([$agentId]);
         $agentData = $agent->fetch(\PDO::FETCH_ASSOC);
         
-        $amount = min($decision['amount_brics'] ?? 1000, $agentData['capital_brics'] * 0.5);
+        if (!$agentData) {
+            return;
+        }
         
-        if ($decision['action'] === 'buy' && $amount > 0) {
+        $action = strtolower($decision['action']);
+        
+        // BUY: acheter et créer une position ouverte
+        if ($action === 'buy') {
+            $amount = min($decision['amount_brics'] ?? 1000, $agentData['capital_brics'] * 0.5);
+            
+            if ($amount <= 0 || $agentData['capital_brics'] < $amount) {
+                logConsole('TRADE_SKIPPED', "BUY ignoré: capital insuffisant pour {$agentData['name']}", [
+                    'agent_id' => $agentId,
+                    'capital_dispo' => $agentData['capital_brics'],
+                    'amount_demande' => $amount
+                ]);
+                return;
+            }
+            
             $quantity = $amount / $coin['current_price'];
             
             // Déduire capital agent
             $db->prepare("UPDATE agents SET capital_brics = capital_brics - ?, last_trade_at = strftime('%s','now'), total_trades = total_trades + 1 WHERE id = ?")
                ->execute([$amount, $agentId]);
+            
+            // Créer/mettre à jour position ouverte
+            $existingPos = $db->prepare("SELECT * FROM open_positions WHERE agent_id = ? AND coin_symbol = ?");
+            $existingPos->execute([$agentId, $coin['symbol']]);
+            $pos = $existingPos->fetch(\PDO::FETCH_ASSOC);
+            
+            if ($pos) {
+                // Moyenne pondérée pour position existante
+                $newTotalInvested = $pos['total_invested'] + $amount;
+                $newQuantity = $pos['quantity'] + $quantity;
+                $newAvgPrice = $newTotalInvested / $newQuantity;
+                
+                $db->prepare("UPDATE open_positions SET quantity = ?, avg_buy_price = ?, total_invested = ?, current_value = ?, unrealized_pnl = ? WHERE id = ?")
+                   ->execute([
+                       $newQuantity,
+                       $newAvgPrice,
+                       $newTotalInvested,
+                       $newQuantity * $coin['current_price'],
+                       ($newQuantity * $coin['current_price']) - $newTotalInvested,
+                       $pos['id']
+                   ]);
+            } else {
+                // Nouvelle position
+                $db->prepare("INSERT INTO open_positions (agent_id, coin_symbol, coin_id, quantity, avg_buy_price, total_invested, current_value, unrealized_pnl) 
+                              VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                   ->execute([
+                       $agentId,
+                       $coin['symbol'],
+                       $coin['id'],
+                       $quantity,
+                       $coin['current_price'],
+                       $amount,
+                       $quantity * $coin['current_price'],
+                       0
+                   ]);
+            }
             
             // Enregistrer trade
             $db->prepare("INSERT INTO agent_trades (agent_id, coin_symbol, action, price, quantity, value_brics, reasoning, timeframe) 
@@ -985,7 +1068,85 @@ PROMPT;
             logConsole('TRADE_EXECUTED', "BUY: {$agentData['name']} achète $amount BRICS de {$coin['symbol']}", [
                 'agent_id' => $agentId,
                 'coin' => $coin['symbol'],
+                'quantity' => $quantity,
+                'price' => $coin['current_price'],
                 'amount' => $amount
+            ]);
+        }
+        
+        // SELL: vendre une position ouverte
+        elseif ($action === 'sell') {
+            // Chercher position ouverte pour cet agent et cette crypto
+            $posStmt = $db->prepare("SELECT * FROM open_positions WHERE agent_id = ? AND coin_symbol = ?");
+            $posStmt->execute([$agentId, $coin['symbol']]);
+            $position = $posStmt->fetch(\PDO::FETCH_ASSOC);
+            
+            if (!$position) {
+                // Pas de position ouverte, chercher n'importe quelle position de l'agent
+                $posStmt = $db->prepare("SELECT * FROM open_positions WHERE agent_id = ? LIMIT 1");
+                $posStmt->execute([$agentId]);
+                $position = $posStmt->fetch(\PDO::FETCH_ASSOC);
+                
+                if (!$position) {
+                    logConsole('TRADE_SKIPPED', "SELL ignoré: aucune position ouverte pour {$agentData['name']}", [
+                        'agent_id' => $agentId,
+                        'coin' => $coin['symbol']
+                    ]);
+                    return;
+                }
+            }
+            
+            // Calculer PnL réel
+            $sellQuantity = $position['quantity']; // Vendre toute la position
+            $sellValue = $sellQuantity * $coin['current_price'];
+            $pnl = $sellValue - $position['total_invested'];
+            $pnlPercent = ($pnl / $position['total_invested']) * 100;
+            
+            // Ajouter capital + PnL à l'agent
+            $db->prepare("UPDATE agents SET capital_brics = capital_brics + ?, total_pnl = total_pnl + ?, total_trades = total_trades + 1, last_trade_at = strftime('%s','now') WHERE id = ?")
+               ->execute([$sellValue, $pnl, $agentId]);
+            
+            // Mettre à jour win_rate
+            $totalTrades = (int)$db->query("SELECT COUNT(*) FROM agent_trades WHERE agent_id = $agentId AND action='sell'")->fetchColumn() + 1;
+            $winningTrades = (int)$db->query("SELECT COUNT(*) FROM agent_trades WHERE agent_id = $agentId AND action='sell' AND pnl > 0")->fetchColumn();
+            $winRate = $totalTrades > 0 ? ($winningTrades / $totalTrades) * 100 : 0;
+            $db->prepare("UPDATE agents SET win_rate = ? WHERE id = ?")->execute([$winRate, $agentId]);
+            
+            // Enregistrer trade de vente avec PnL réel
+            $db->prepare("INSERT INTO agent_trades (agent_id, coin_symbol, action, price, quantity, value_brics, pnl, pnl_percent, reasoning, timeframe) 
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+               ->execute([
+                   $agentId,
+                   $position['coin_symbol'],
+                   'sell',
+                   $coin['current_price'],
+                   $sellQuantity,
+                   $sellValue,
+                   $pnl,
+                   $pnlPercent,
+                   $decision['reasoning'] ?? 'Sell signal',
+                   $agentData['timeframe']
+               ]);
+            
+            // Supprimer position ouverte
+            $db->prepare("DELETE FROM open_positions WHERE id = ?")->execute([$position['id']]);
+            
+            // ============================================
+            // REINFORCEMENT LEARNING: Mettre à jour avec le VRAI PnL
+            // ============================================
+            $reward = $pnl; // Le vrai reward est le PnL réalisé
+            
+            // Mettre à jour les expériences RL récentes pour cet agent
+            $stateHash = hash('sha256', json_encode(['market' => 'current', 'agent' => $agentId]));
+            $db->prepare("UPDATE rl_memory SET reward = ? WHERE state_data LIKE ? AND action_taken = 'buy' AND reward = 0")
+               ->execute([$reward, '%' . $agentId . '%']);
+            
+            logConsole('TRADE_EXECUTED', "SELL: {$agentData['name']} vend {$position['coin_symbol']} | PnL: " . number_format($pnl, 2) . " BRICS (" . number_format($pnlPercent, 2) . "%)", [
+                'agent_id' => $agentId,
+                'coin' => $position['coin_symbol'],
+                'sell_value' => $sellValue,
+                'pnl' => $pnl,
+                'pnl_percent' => $pnlPercent
             ]);
         }
     }
