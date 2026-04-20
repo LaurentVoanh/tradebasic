@@ -303,9 +303,12 @@
                 url.searchParams.set('action', action);
                 Object.keys(params).forEach(k => url.searchParams.set(k, params[k]));
                 const res = await fetch(url);
+                if (!res.ok) {
+                    throw new Error('HTTP error ' + res.status);
+                }
                 return await res.json();
             } catch (e) {
-                console.error('Fetch error:', e);
+                console.error('Fetch error for ' + action + ':', e);
                 return null;
             }
         }
@@ -453,9 +456,31 @@
             await updateLogs();
         }
         
-        // Start
-        updateMarket();
-        mainLoop();
+        // Start - Initial load with error handling and logging
+        async function init() {
+            addLog('info', 'Démarrage du système...');
+            try {
+                addLog('info', 'Mise à jour du marché...');
+                await updateMarket();
+                addLog('info', 'Chargement des données principales...');
+                await mainLoop();
+                addLog('info', 'Initialisation terminée avec succès.');
+            } catch (e) {
+                console.error('Initial load error:', e);
+                addLog('error', 'Erreur au chargement: ' + e.message);
+            }
+        }
+        
+        // Add log helper
+        function addLog(type, message) {
+            const container = document.getElementById('console-logs');
+            const div = document.createElement('div');
+            div.className = 'feed-item feed-' + type;
+            div.innerHTML = '<div class="feed-time">' + new Date().toLocaleTimeString() + '</div><div>' + message + '</div>';
+            container.insertBefore(div, container.firstChild);
+        }
+        
+        init();
         
         // Polling intervals
         setInterval(mainLoop, 3000);      // Data refresh every 3s
