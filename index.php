@@ -458,16 +458,21 @@
         
         // Start - Initial load with error handling and logging
         async function init() {
-            addLog('info', 'Démarrage du système...');
+            addLog('info', '🚀 Démarrage du système IA Crypto Invest...');
             try {
-                addLog('info', 'Mise à jour du marché...');
+                addLog('info', '📡 Mise à jour du marché crypto...');
                 await updateMarket();
-                addLog('info', 'Chargement des données principales...');
+                addLog('info', '📊 Chargement des données principales...');
                 await mainLoop();
-                addLog('info', 'Initialisation terminée avec succès.');
+                
+                // Force first brain cycle to create initial agents
+                addLog('info', '🧠 Initialisation du cerveau IA...');
+                await triggerCycle();
+                
+                addLog('success', '✅ Système prêt - Agents IA en cours de déploiement');
             } catch (e) {
                 console.error('Initial load error:', e);
-                addLog('error', 'Erreur au chargement: ' + e.message);
+                addLog('error', '⚠️ Erreur au chargement: ' + e.message);
             }
         }
         
@@ -484,7 +489,7 @@
         
         // Polling intervals
         setInterval(mainLoop, 3000);      // Data refresh every 3s
-        setInterval(triggerCycle, 10000);  // Brain cycle every 10s
+        setInterval(triggerCycle, 5000);   // Brain cycle every 5s for faster startup
         
         // Auto-scroll feeds
         setInterval(() => {
