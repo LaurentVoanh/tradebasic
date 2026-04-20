@@ -23,9 +23,7 @@ set_time_limit(600);
 // CONFIGURATION
 // ============================================================
 define('MISTRAL_KEYS', [
-    'sk-proj-KEY1' => 'sk-proj-votre-cle-api-1-ici',
-    'sk-proj-KEY2' => 'sk-proj-votre-cle-api-2-ici', 
-    'sk-proj-KEY3' => 'sk-proj-votre-cle-api-3-ici',
+    'sk-proj-KEY1' => getenv('MISTRAL_API_KEY') ?: 'sk-proj-votre-cle-api-mistral-ici',
 ]);
 define('MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1/chat/completions');
 define('DB_DIR', __DIR__ . '/db/');
@@ -382,23 +380,8 @@ function initDatabases(): void {
 // MISTRAL API
 // ============================================================
 function getMistralKey(): string {
-    $keyFile = DB_DIR . 'key_idx.txt';
     $keys = array_values(MISTRAL_KEYS);
-    $count = count($keys);
-    
-    // Lire l'index actuel depuis le fichier (persistant entre requêtes)
-    $currentIndex = 0;
-    if (file_exists($keyFile)) {
-        $currentIndex = (int)file_get_contents($keyFile);
-    }
-    
-    // Sélectionner la clé
-    $key = $keys[$currentIndex % $count];
-    
-    // Incrémenter et sauvegarder pour la prochaine requête
-    file_put_contents($keyFile, ($currentIndex + 1) % $count);
-    
-    return $key;
+    return $keys[0];
 }
 
 function callMistral(
@@ -772,8 +755,13 @@ Réponds UNIQUEMENT en JSON valide avec cette structure exacte:
         800
     );
 
+    // Debug: log raw decision if invalid
     if (!$decision || !isset($decision['action'])) {
-        logConsole('AGENT_ERROR', "Agent $agentId: Décision invalide", ['agent_id' => $agentId]);
+        logConsole('AGENT_ERROR', "Agent $agentId: Décision invalide", [
+            'agent_id' => $agentId,
+            'raw_decision' => $decision ?? 'null',
+            'prompt_length' => strlen($prompt)
+        ]);
         return null;
     }
 
