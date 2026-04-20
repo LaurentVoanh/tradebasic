@@ -2,31 +2,41 @@
 /**
  * IA CRYPTO INVEST - functions.php
  * Core library : DB, Mistral API, market data, agents
- * CURRENCY: BRICS Coins (virtuelle)
+ * CURRENCY: BRICS Coins (1 BRICS = 1 EUR virtuel)
+ * 
+ * SYSTEME COMPLET AVEC:
+ * - Reinforcement Learning puissant
+ * - 3 API Keys Mistral en rotation
+ * - Archive complète des cours historiques
+ * - Console temps réel détaillée
+ * - Capital réellement transféré et mis à jour
  */
 
-error_reporting(0);
+error_reporting(E_ALL);
+ini_set('display_errors', 0);
 set_time_limit(600);
 
 // ============================================================
 // CONFIGURATION
 // ============================================================
 define('MISTRAL_KEYS', [
-    'KEY_1' => '5qgfdgfdgdfH8Rake',
-    'KEY_2' => 'o3rG1gfdgfdgfdXRShytu',
-    'KEY_3' => 'vEzQMKgfdgfdgfdDjFruXkF',
+    'sk-proj-KEY1' => 'sk-proj-votre-cle-api-1-ici',
+    'sk-proj-KEY2' => 'sk-proj-votre-cle-api-2-ici', 
+    'sk-proj-KEY3' => 'sk-proj-votre-cle-api-3-ici',
 ]);
 define('MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1/chat/completions');
 define('DB_DIR', __DIR__ . '/db/');
-define('COINGECKO_MARKETS', 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=eur&order=market_cap_desc&per_page=100&page=1&sparkline=true&price_change_percentage=24h,7d');
-define('BINANCE_TICKER', 'https://api.binance.com/api/v3/ticker/24hr');
-define('INITIAL_CAPITAL', 1000000.00); // 1 Million BRICS Coins
-define('TARGET_AGENTS', 100);
-define('SHORT_TERM_RATIO', 0.33);
-define('MEDIUM_TERM_RATIO', 0.33);
-define('LONG_TERM_RATIO', 0.34);
+define('COINGECKO_MARKETS', 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=eur&order=market_cap_desc&per_page=50&page=1&sparkline=true&price_change_percentage=24h,7d,30d');
+define('COINGECKO_HISTORY', 'https://api.coingecko.com/api/v3/coins/{id}/ohlc?vs_currency=eur&days={days}');
+define('INITIAL_CAPITAL', 1000000.00); // 1 Million BRICS Coins = 1M EUR
+define('TARGET_AGENTS', 50); // Nombre optimal d'agents
+define('AGENT_CAPITAL', 20000.00); // Capital par agent (2% du total)
 define('TRADE_INTERVAL_SECONDS', 8);
-define('MODEL_PRICE', 5000); // Prix d'un modèle IA en BRICS Coins
+define('BRAIN_CYCLE_SECONDS', 30); // Cycle complet du cerveau toutes les 30s
+define('MAX_CONSOLE_LOGS', 500);
+define('RL_LEARNING_RATE', 0.15); // Taux d'apprentissage RL
+define('RL_DISCOUNT_FACTOR', 0.9); // Facteur de discount RL
+define('MIN_CONFIDENCE_TRADE', 65); // Confiance minimum pour trader
 
 // ============================================================
 // DATABASE CONNECTIONS
