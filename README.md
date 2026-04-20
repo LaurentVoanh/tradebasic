@@ -1,91 +1,184 @@
-# IA CRYPTO INVEST — Guide d'installation
+# IA CRYPTO INVEST - Système de Trading Autonome par IA
 
-## Structure des fichiers
+## 🚀 Description
+
+Système complet de trading automatique de cryptomonnaies utilisant une **IA Centrale** (Cerveau) qui crée et gère des **Agents IA spécialisés** avec des stratégies différentes.
+
+### Architecture
 
 ```
-ia_crypto_invest/
-├── index.php          ← Interface principale (dashboard)
-├── api.php            ← Handler AJAX (toutes les actions)
-├── functions.php      ← Library core (DB, Mistral, market, agents)
-├── cron_update.php    ← Cron : mise à jour marché + brain cycle
-├── schema.sql         ← Schéma complet des 4 bases SQLite
-├── .htaccess          ← Config LiteSpeed/Hostinger
-└── db/                ← Dossier créé automatiquement
-    ├── main.db        ← Users, agents, coins, news, analyses
-    ├── short_term.db  ← Ticks, OHLCV 1m/5m, signaux scalping
-    ├── medium_term.db ← OHLCV 1h/4h/1d, indicateurs techniques
-    └── long_term.db   ← Fondamentaux, thèses, historique daily
+┌─────────────────────────────────────────────────────────────┐
+│                    CERVEAU CENTRAL (IA)                      │
+│  - Analyse le marché en temps réel                           │
+│  - Crée de nouveaux agents basés sur les meilleurs performers│
+│  - Archive les agents sous-performants                       │
+│  - Applique du Reinforcement Learning continu                │
+│  - Distribue le capital aux agents                           │
+└─────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌───────────────┐   ┌───────────────┐   ┌───────────────┐
+│  Agent APEX   │   │  Agent NOVA   │   │  Agent ZEUS   │
+│  Scalping     │   │  Swing        │   │  Long Term    │
+│  BTC/ETH      │   │  Support/Res  │   │  Fundamentals │
+└───────────────┘   └───────────────┘   └───────────────┘
+        │                     │                     │
+        └─────────────────────┼─────────────────────┘
+                              ▼
+                    ┌─────────────────┐
+                    │   EXÉCUTION     │
+                    │   Trades réels  │
+                    │   BRICS Coins   │
+                    └─────────────────┘
 ```
 
-## Installation sur Hostinger
+## 💰 Monnaie : BRICS Coin
 
-1. **Upload tous les fichiers** dans votre dossier public_html (ou sous-dossier)
+- **1 BRICS Coin = 1 Euro** (valeur virtuelle pour simulation)
+- Capital initial : **1,000,000 BRICS** (1M EUR)
+- Tous les trades sont exécutés en BRICS Coins
 
-2. **Créez le dossier db/** et assurez-vous qu'il est writable :
-   ```
-   mkdir db
-   chmod 755 db
-   ```
+## 🔧 Installation
 
-3. **Premier accès** : Visitez `index.php` — les BDD et les 10 agents par défaut
-   sont créés automatiquement.
+### 1. Prérequis
 
-4. **Cron (recommandé)** : Dans le panel Hostinger, ajoutez un cron :
-   - Chaque minute : `php /home/u170902479/public_html/ia_crypto_invest/cron_update.php`
-   - Ou URL cron : `https://votresite.com/ia_crypto_invest/cron_update.php`
+- Serveur PHP 7.4+ avec SQLite3
+- Accès à l'API Mistral AI (optionnel, mode simulation inclus)
+- Cron job pour l'exécution automatique
 
-## Configuration API
+### 2. Configuration API Mistral (Optionnel)
 
-Les clés Mistral sont dans `functions.php` — constante `MISTRAL_KEYS`.
+Pour utiliser la vraie IA, configurez votre clé API:
 
-## Sources de données
+```bash
+export MISTRAL_API_KEY="sk-proj-votre-clé-mistral-ici"
+```
 
-- **CoinGecko** : Top 100 cryptos en EUR avec sparklines 7j
-- **Binance** : Tickers 24h pour prix live
-- **Google News RSS** : Actualités par coin
-- **CoinDesk/CoinTelegraph RSS** : Flux crypto généraux
+Ou modifiez directement `functions.php`:
+```php
+define('MISTRAL_API_KEY', 'sk-proj-votre-clé-mistral-ici');
+```
 
-## Fonctionnalités
+**Sans clé API**, le système fonctionne en **mode simulation** avec des réponses IA générées localement.
 
-### Marché
-- Top 100 cryptos avec mise à jour auto toutes les 60s
-- Sparklines 7 jours par coin
-- Tri par rank, prix, variation, volume, market cap
-- Recherche en temps réel
+### 3. Initialisation de la Base de Données
 
-### Agents IA (Cerveau Central)
-- 10 agents pré-créés au démarrage
-- Création d'agents en langage naturel
-- Apprentissage par renforcement : archivage des mauvais, création des meilleurs
-- Toujours 100 agents actifs maintenus
-- Décisions de trading simulées avec Mistral
+Les bases de données SQLite sont créées automatiquement au premier lancement:
+- `db/main.db` - Utilisateurs, agents, trades, configurations
+- `db/short_term.db` - Données temps réel (scalping)
+- `db/medium_term.db` - Données swing trading
+- `db/long_term.db` - Investissements long terme
 
-### Analyse IA
-- Score sentiment (-10 à +10) par coin
-- Facteurs haussiers/baissiers détectés
-- Recommandation short/medium/long terme
-- Articles de presse analysés automatiquement
+### 4. Configuration Cron
 
-### Comptes utilisateur
-- Inscription/connexion (email + bcrypt)
-- Capital virtuel de 1 000 000 € par compte
-- Sessions PHP sécurisées
+Pour un trading automatique, ajoutez au crontab:
 
-## Modèles Mistral utilisés
+```bash
+# Mise à jour marché et cycle cerveau toutes les minutes
+* * * * * php /path/to/cron_update.php >> /var/log/ia_crypto.log 2>&1
 
-| Tâche | Modèle |
-|-------|--------|
-| Décisions agents | mistral-small-2506 |
-| Analyse news | magistral-medium-2509 |
-| Cerveau Central | mistral-large-2512 |
-| Génération agents | mistral-large-2512 |
-| Leçons archivage | ministral-8b-2512 |
-| Contexte large | mistral-small-2603 |
+# Cycle de trade toutes les 8 secondes (via script dédié ou AJAX browser)
+```
 
-## Performance
+## 🎯 Fonctionnement
 
-- SQLite WAL mode sur toutes les BDD
-- Index sur toutes les colonnes fréquentes
-- Rotation automatique des clés Mistral
-- sleep(1) entre appels API (rate limit free tier)
-- Timeout 120s par appel Mistral
+### Cycle de Trading (toutes les 8 secondes)
+
+1. **Récupération des cours** depuis CoinGecko API
+2. **Analyse marché** par chaque agent actif
+3. **Décision de trade** (buy/sell/hold) avec confiance %
+4. **Exécution réelle** du trade en BRICS Coins
+5. **Mise à jour P&L** et statistiques
+
+### Cycle Cerveau Central (toutes les 30 secondes)
+
+1. **Analyse performance** de tous les agents
+2. **Archive** les agents avec PnL < -5% (après 5 trades minimum)
+3. **Extraction leçons** des échecs (via IA)
+4. **Création nouveaux agents** basés sur:
+   - Stratégies des top performers
+   - Leçons des agents archivés
+   - Diversité des timeframes
+5. **Distribution capital** aux nouveaux agents
+
+### Types d'Agents
+
+| Type | Timeframe | Stratégie | Risque |
+|------|-----------|-----------|--------|
+| Scalping | 1-15 min | Mouvements rapides | Élevé |
+| Momentum | 15min-4h | Suit les tendances | Moyen |
+| Swing | 4h-1j | Supports/Résistances | Moyen |
+| DCA | 1j-1sem | Achat progressif | Faible |
+| Long Term | 1sem+ | Fondamentaux | Faible |
+
+## 📊 Interface Web
+
+Accédez à `index.php` pour voir:
+
+- **Console IA** : Logs en temps réel des décisions
+- **Statistiques** : Capital, PnL, win rate, nombre d'agents
+- **Top Cryptos** : Prix et variations en direct
+- **Agents Actifs** : Performance de chaque agent
+- **Meilleur Performer** : Agent du moment
+
+### Bouton "Cycle IA"
+
+Force l'exécution immédiate d'un cycle cerveau complet.
+
+## 📈 Statistiques Clés
+
+- **Capital Total** : 1,000,000 BRICS
+- **Capital Pool** : Fonds non alloués
+- **Capital Agents** : Fonds chez les agents
+- **PnL Total** : Profit/perte cumulé
+- **Win Rate** : % de trades gagnants
+- **Agents Actifs** : Nombre d'agents en activité
+
+## 🔒 Sécurité
+
+- Erreurs PHP loguées mais non affichées en production
+- Bases de données en WAL mode pour performance
+- Protection contre exécutions concurrentes (lock file)
+- Validation des inputs API
+
+## 🛠️ Dépannage
+
+### Le site ne charge pas
+1. Vérifiez que le dossier `db/` existe et est writable
+2. Consultez les logs erreur PHP
+3. Exécutez manuellement: `php cron_update.php`
+
+### Pas de trades exécutés
+1. Vérifiez que des agents existent (table `agents`)
+2. Contrôlez les logs console dans l'interface
+3. En mode simulation, les trades sont aléatoires
+
+### API Mistral ne répond pas
+1. Vérifiez votre clé API
+2. Testez avec: `curl -H "Authorization: Bearer VOTRE_CLE" https://api.mistral.ai/v1/models`
+3. Le mode simulation prend le relais automatiquement
+
+## 📝 Fichiers Principaux
+
+| Fichier | Rôle |
+|---------|------|
+| `index.php` | Interface utilisateur |
+| `api.php` | Endpoints API JSON |
+| `functions.php` | Logique métier complète |
+| `cron.php` | Cycle de trade (8s) |
+| `cron_update.php` | Mise à jour marché + cerveau |
+| `schema.sql` | Structure database |
+
+## 🎯 Objectif
+
+Maximiser le profit en BRICS Coins grâce à:
+- La diversification des stratégies d'agents
+- L'apprentissage continu par reinforcement
+- L'adaptation dynamique aux conditions de marché
+- L'archivage intelligent des stratégies perdantes
+
+---
+
+**⚠️ Attention** : Ceci est un système de **simulation**. Les BRICS Coins n'ont pas de valeur réelle. Utilisez uniquement à des fins éducatives et de test.
