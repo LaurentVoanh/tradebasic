@@ -49,10 +49,12 @@ class Engine {
     private function __construct() {
         $this->ensureDirectories();
         $this->cache = new Cache();
-        $this->db = new Database();
         $this->apiRotation = new ApiRotation();
-        $this->rlMemory = new RLMemory($this->db);
+        $this->db = new Database();
         $this->market = new MarketData($this->db, $this->cache);
+        $this->db->setMarket($this->market);
+        $this->db->setApiRotation($this->apiRotation);
+        $this->rlMemory = new RLMemory($this->db);
         $this->agentManager = new AgentManager($this->db, $this->apiRotation, $this->rlMemory);
         $this->brain = new Brain($this->db, $this->agentManager, $this->rlMemory);
         $this->db->init();
@@ -379,6 +381,10 @@ class Database {
     private $market;
     private $apiRotation;
     
+    public function __construct() {
+        // Will be set by Engine after instantiation
+    }
+    
     public function setMarket($market) { $this->market = $market; }
     public function setApiRotation($api) { $this->apiRotation = $api; }
     public function getMarket() { return $this->market; }
@@ -619,7 +625,7 @@ class MarketData {
         $cacheKey = 'coingecko_markets';
         $cached = $this->cache->get($cacheKey, 60);
         
-        if ($cached) {
+        if ($cached && is_array($cached) && count($cached) > 0) {
             $this->storeCoins($cached);
             return count($cached);
         }
@@ -627,13 +633,22 @@ class MarketData {
         $ch = curl_init(COINGECKO_MARKETS);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        if (!$response) return 0;
+        if (!$response || $httpCode != 200) {
+            error_log("CoinGecko API error: HTTP $httpCode");
+            // Return cached data or empty array on failure
+            return 0;
+        }
         
         $data = json_decode($response, true);
-        if (!isset($data) || !is_array($data)) return 0;
+        if (!isset($data) || !is_array($data) || isset($data['status'])) {
+            error_log("CoinGecko API invalid response: " . json_encode($data));
+            return 0;
+        }
         
         $this->cache->set($cacheKey, $data, 60);
         $this->storeCoins($data);
@@ -649,12 +664,14 @@ class MarketData {
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         
-        if ($response) {
+        if ($response && $httpCode == 200) {
             $data = json_decode($response, true);
-            if (isset($data) && is_array($data)) {
+            if (isset($data) && is_array($data) && !isset($data['status'])) {
                 $this->cache->set('coingecko_page_' . $page, $data, 60);
                 $this->storeCoins($data);
             }
@@ -669,6 +686,10 @@ class MarketData {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         
         foreach ($coins as $coin) {
+            // Skip invalid entries
+            if (!isset($coin['id']) || !isset($coin['symbol']) || !isset($coin['name'])) {
+                continue;
+            }
             $sparkline = isset($coin['sparkline_in_7d']['price']) ? json_encode($coin['sparkline_in_7d']['price']) : '[]';
             $stmt->execute([
                 $coin['id'],
